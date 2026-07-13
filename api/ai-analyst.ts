@@ -16,7 +16,90 @@ function getFallbackAnalysis(prompt: string, context: any): string {
 
   const query = (prompt || "").toLowerCase();
 
-  // If user is asking about specific keywords
+  // 1. Slow Sales Query (အရောင်းပါး / ရောင်းမကောင်း)
+  if (
+    query.includes("ပါး") || 
+    query.includes("ရောင်းမကောင်း") || 
+    query.includes("slow") || 
+    query.includes("ကျဆင်း") || 
+    query.includes("အေး") || 
+    query.includes("အရောင်းကျ")
+  ) {
+    let response = `📉 **အရောင်းအေး/အရောင်းပါးချိန်တွင် အရောင်းပြန်တက်လာစေမည့် နည်းဗျူဟာများ**\n\n`;
+    response += `ဆိုင်ရှင်တို့အနေနဲ့ အရောင်းအေးတဲ့ရက်တွေ၊ ရာသီတွေမှာ အောက်ပါ လက်တွေ့ကျတဲ့ စီးပွားရေးနည်းလမ်းတွေကို အသုံးပြုပြီး အရောင်းမြှင့်တင်နိုင်ပါတယ်ခင်ဗျာ -\n\n`;
+    response += `၁။ **ပစ္စည်းအတွဲအစပ်များ ပြုလုပ်ပါ (Bundling & Combos):**\n`;
+    response += `   ရောင်းအားနှေးနေတဲ့ ပစ္စည်းတွေကို ရောင်းအားကောင်းတဲ့ ပစ္စည်းတွေနဲ့ တွဲဖက်ပြီး Combo Set အနေနဲ့ စျေးနှုန်းအနည်းငယ်လျှော့ကာ ရောင်းချပါ။ ဝယ်သူတွေအနေနဲ့ ပိုပြီးတန်ဖိုးရှိတယ်လို့ ခံစားရစေပါတယ်။\n\n`;
+    response += `၂။ **Customer ဟောင်းများကို ပြန်လည်ဆွဲဆောင်ပါ (Customer Re-engagement):**\n`;
+    response += `   ဝယ်ယူဖူးတဲ့ customer ဟောင်းတွေကို Viber သို့မဟုတ် ဖုန်းမှတစ်ဆင့် အသစ်ဝင်တဲ့ပစ္စည်းတွေအကြောင်း အသိပေးပြီး နှုတ်ဆက်စကားပြောပါ။ Customer အသစ်ရှာဖွေခြင်းထက် Customer ဟောင်းကို ပြန်လည်ရောင်းချခြင်းက ကုန်ကျစရိတ် ပိုမိုသက်သာပြီး ထိရောက်ပါတယ်။\n\n`;
+    response += `၃။ **Social Media တွင် အာရုံစိုက်ပါ (Digital Marketing):**\n`;
+    response += `   ဆိုင်ရှိ ပစ္စည်းပုံလှလှလေးတွေကို Facebook၊ TikTok သို့မဟုတ် Viber Group များတွင် ပုံမှန်တင်ပေးပြီး ဆိုင်၏အထူးဝန်ဆောင်မှုများနှင့် တည်နေရာကို ညွှန်ပြပေးပါ။\n\n`;
+    response += `၄။ **စတိုးဆိုင် ခင်းကျင်းပြသမှုကို ပြောင်းလဲပါ (Visual Merchandising):**\n`;
+    response += `   ကုန်ပစ္စည်းများ ခင်းကျင်းပြသပုံကို ပြောင်းလဲပေးခြင်းက ဝယ်သူတွေအတွက် ဆန်းသစ်မှုကို ခံစားရစေပြီး ပျောက်ကွယ်နေတဲ့ ဝယ်လိုစိတ်ကို ပြန်လည်လှုံ့ဆော်ပေးနိုင်ပါတယ်။\n\n`;
+    response += `*(💡 အကြံပြုချက်: လက်ရှိ ဆိုင်မှာ ကုန်ပစ္စည်းစုစုပေါင်း **${totalProducts}** မျိုးရှိရာ၊ ပစ္စည်းတစ်ခုချင်းစီရဲ့ ရောင်းအားကို ပြန်လည်စစ်ဆေးပြီး အရောင်းအေးနေတဲ့ ပစ္စည်းတွေကို "အထူးပရိုမိုးရှင်း" စျေးနှုန်းနဲ့ အမြန်ဆုံး ငွေဖော်သင့်ပါတယ်ခင်ဗျာ။)*`;
+    return response;
+  }
+
+  // 2. Boost Sales Query (အရောင်းမြှင့်တင်ရန် / ရောင်းကောင်းချင်)
+  if (
+    query.includes("မြှင့်") || 
+    query.includes("ရောင်းကောင်း") || 
+    query.includes("တိုးတက်") || 
+    query.includes("boost") || 
+    query.includes("increase sales") ||
+    query.includes("ရောင်းချင်")
+  ) {
+    let response = `🚀 **အရောင်းမြှင့်တင်ပြီး ဝင်ငွေတိုးတက်စေရန် လက်တွေ့နည်းလမ်းများ**\n\n`;
+    response += `အရောင်းကို အရှိန်အဟုန်နဲ့ မြှင့်တင်ဖို့အတွက် ဆိုင်ရှင်တို့ လုပ်ဆောင်သင့်တဲ့ အဓိကအချက် (၄) ချက်ကို အကြံပြုပါရစေခင်ဗျာ -\n\n`;
+    response += `၁။ **ဆွဲဆောင်မှုရှိသော ပရိုမိုးရှင်း အစီအစဉ်များ ဖန်တီးပါ:**\n`;
+    response += `   - **Buy 1 Get 1 (တစ်ခုဝယ် တစ်ခုလက်ဆောင်):** လူသုံးများတဲ့ ပစ္စည်းတွေကို တွဲဖက်ရောင်းချပါ။\n`;
+    response += `   - **အဆင့်လိုက်လျှော့စျေး:** သတ်မှတ်ငွေပမာဏ (ဥပမာ- ၂ သောင်းကျပ်) ပြည့်အောင် ဝယ်ယူပါက ၁,၀၀၀ ကျပ် လျှော့ပေးခြင်းမျိုး ပြုလုပ်ပါ။\n\n`;
+    response += `၂။ **သစ္စာရှိဝယ်ယူသူများအတွက် ဦးစားပေးစနစ် (Loyalty Program):**\n`;
+    response += `   ပုံမှန်ဝယ်ယူနေကျ ဖောက်သည်များအတွက် Member စနစ်ပြုလုပ်ပေးခြင်း သို့မဟုတ် ဝယ်ယူမှုအကြိမ်ရေအလိုက် Discount ကတ်များ ပေးအပ်ခြင်းဖြင့် သင့်ဆိုင်ကိုပဲ အမြဲလာရောက်စေရန် ဆွဲဆောင်ပါ။\n\n`;
+    response += `၃။ **လွယ်ကူလျင်မြန်သော ငွေပေးချေမှုစနစ် (Digital Payment):**\n`;
+    response += `   KPay, WavePay, စတဲ့ Mobile Banking စနစ်မျိုးစုံဖြင့် ငွေလွှဲလက်ခံပေးခြင်းက ဝယ်သူများ ဝယ်ယူရလွယ်ကူပြီး အရောင်းပိုမို မြန်ဆန်စေပါတယ်။\n\n`;
+    response += `၄။ **ဝန်ဆောင်မှု အရည်အသွေးမြှင့်တင်ပါ (Customer Service):**\n`;
+    response += `   ဆိုင်ဝန်ထမ်းများ၏ ဖော်ရွေပျူငှာစွာ ဆက်ဆံမှု၊ အပြုံးဖြင့် ကြိုဆိုမှုနှင့် ကုန်ပစ္စည်းအချက်အလက်ကို သေချာရှင်းပြနိုင်မှုတို့က ဝယ်သူများကို ထပ်မံလာရောက်စေရန် အကောင်းဆုံး ဆွဲဆောင်မှု ဖြစ်ပါသည်။\n\n`;
+    response += `*(📊 ငွေကြေးဆိုင်ရာခန့်မှန်းချက်: လက်ရှိ ဆိုင်ရှိကုန်ပစ္စည်းများအားလုံး ရောင်းထွက်ပါက ခန့်မှန်းခြေ **${potentialSalesValue.toLocaleString()} Ks** အထိ ရရှိနိုင်ပြီး အသားတင်အမြတ် **${potentialProfit.toLocaleString()} Ks** ခန့် ထွက်ရှိနိုင်သဖြင့် အရောင်းမြှင့်တင်ရေးကို စနစ်တကျ အားထည့်လုပ်ဆောင်သင့်ပါတယ်ခင်ဗျာ။)*`;
+    return response;
+  }
+
+  // 3. New Stock Recommendation Query (ဘာတွေ stock အသစ်တင်ရမလဲ / စတော့အသစ်)
+  if (
+    query.includes("စတော့အသစ်") || 
+    query.includes("stock အသစ်") || 
+    query.includes("ပစ္စည်းအသစ်") || 
+    query.includes("သစ်တင်") || 
+    query.includes("ဝယ်ရမလဲ") || 
+    query.includes("တင်ရမလဲ") || 
+    query.includes("သစ်သွင်း") || 
+    query.includes("new stock")
+  ) {
+    let response = `📦 **စတော့အသစ်တင်သွင်းရန်နှင့် ကုန်ပစ္စည်းရွေးချယ်ရန် လမ်းညွှန်ချက်**\n\n`;
+    response += `ကုန်ပစ္စည်းအသစ်တွေ ဖြည့်တင်းတဲ့အခါ ငွေကြေးအကျိုးအမြတ် အများဆုံးရရှိစေဖို့ အောက်ပါအချက်တွေကို အခြေခံပြီး စဉ်းစားရန် အကြံပြုပါရစေခင်ဗျာ -\n\n`;
+    response += `၁။ **လက်ရှိစတော့ပြတ်လပ်နေသောပစ္စည်းများကို အရင်ဖြည့်တင်းပါ:**\n`;
+    if (lowStockCount > 0) {
+      response += `   - လက်ရှိတွင် ဆိုင်၌ စတော့ပြတ်လုနီးပါးဖြစ်နေသော ပစ္စည်း **${lowStockCount}** မျိုး ရှိနေပါသည်။ ၎င်းတို့ကို အရင်ဆုံး မှာယူဖြည့်တင်းသင့်ပါတယ်ခင်ဗျာ။\n`;
+      const itemsToDisplay = lowStockItems.length > 0 ? lowStockItems : itemsSample.filter((i: any) => (i.stock || 0) <= 5);
+      if (itemsToDisplay.length > 0) {
+        response += `   - **ဦးစားပေးဖြည့်ရန်:** `;
+        response += itemsToDisplay.slice(0, 5).map((item: any) => `**${item.name}**`).join(", ") + ` စသည်တို့ ဖြစ်ပါသည်။\n\n`;
+      } else {
+        response += `\n`;
+      }
+    } else {
+      response += `   - လက်ရှိတွင် ဆိုင်၌ စတော့ပြတ်လပ်နေသော ပစ္စည်းမရှိသဖြင့် အလွန်ကောင်းမွန်ပါသည်။\n\n`;
+    }
+    response += `၂။ **ရာသီအလိုက် ခေတ်စားသောကုန်ပစ္စည်းများကို လေ့လာပါ (Seasonal Goods):**\n`;
+    response += `   ဥပမာအားဖြင့် မိုးရာသီဆိုလျှင် ထီး၊ မိုးကာ၊ ခြင်ပြေးဆေးများ၊ သီတင်းကျွတ်/တန်ဆောင်တိုင်ဆိုလျှင် မီးထွန်းပစ္စည်းများ၊ နွေရာသီဆိုလျှင် အအေးနှင့် လူသုံးကုန်ပစ္စည်းများကို ခေတ်ရေစီးကြောင်းအလိုက် အနည်းငယ်စီ စမ်းသပ်တင်သွင်းကြည့်ပါ။\n\n`;
+    response += `၃။ **ရောင်းအားအကောင်းဆုံး ကဏ္ဍကို ထပ်မံချဲ့ထွင်ပါ (Analyze Best Sellers):**\n`;
+    response += `   သင့်ဆိုင်မှာ လူကြိုက်အများဆုံး အမျိုးအစား (ဥပမာ- မုန့်နှင့်စားသောက်ကုန်၊ အလှကုန် သို့မဟုတ် ကလေးသုံးပစ္စည်း) ကို ဆန်းစစ်ပြီး ၎င်းအမျိုးအစားခွဲများထဲမှ အသစ်ထွက်ရှိလာသော တံဆိပ်သစ်များကို ထပ်မံဖြည့်တင်းပါ။\n\n`;
+    response += `၄။ **Supplier များနှင့် ဒိုင်များထံမှ စုံစမ်းပါ:**\n`;
+    response += `   လက်ကားဒိုင်ကြီးများတွင် လက်ရှိ မည်သည့်ပစ္စည်းများ ရောင်းအားအကောင်းဆုံးဖြစ်နေသည်ကို မေးမြန်းလေ့လာပြီး ဆိုင်၏ ဝယ်သူအကြိုက်နှင့် ကိုက်ညီမည့်ပစ္စည်းများကို ရွေးချယ်တင်သွင်းပါ။\n\n`;
+    response += `💡 **အကြံပြုချက်:** စတော့အသစ်များ မတင်သွင်းမီ လက်ရှိရောင်းမထွက်ဘဲ ကြာရှည်ကျန်နေသော ပစ္စည်းဟောင်းများကို လျှော့စျေးဖြင့် ငွေဖော်ယူပြီးမှ ကုန်ပစ္စည်းအသစ်များကို အားဖြည့်ဝယ်ယူရန် အကြံပြုလိုပါသည်။`;
+    return response;
+  }
+
+  // If user is asking about specific keywords (Fallback standard queries)
   if (query.includes("စတော့") || query.includes("stock") || query.includes("လက်ကျန်")) {
     let response = `📦 **စတော့နှင့် ကုန်ပစ္စည်းလက်ကျန် သုံးသပ်ချက်**\n\n`;
     response += `- **စုစုပေါင်းကုန်ပစ္စည်းအမျိုးအစား:** ${totalProducts} မျိုး ရှိပါသည်။\n`;
@@ -155,7 +238,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const formattedContext = JSON.stringify(context, null, 2);
 
-    const systemInstruction = `You are "Swift POS AI Analyst", an expert business analyst and financial advisor for a retail store or enterprise.
+    const systemInstruction = `You are "Swift POS AI Analyst", an expert business analyst and financial advisor for a retail store or enterprise in Myanmar.
 The user is viewing their store management dashboard, which contains real-time inventory and financial transactions.
 Your goal is to provide insightful, professional, and practical advice to help them grow their sales, optimize stock, and manage expenses.
 
@@ -165,9 +248,13 @@ ${formattedContext}
 Guidelines:
 1. Speak in Burmese (မြန်မာဘာသာ) by default, as the store owners and staff are based in Myanmar. If the user asks a question in English, you can reply in English.
 2. Keep your answers clear, concise, highly professional, encouraging, and structured (use bullet points where appropriate).
-3. Be highly realistic and actionable. Suggest practical steps like "promote item X because stock is high and it sells well" or "reorder item Z because stock is below the threshold".
-4. Do not mention any internal programming or database details.
-5. If there is no context or the context is empty, politely ask them to log more sales or products to get better insights.`;
+3. Pay special attention to popular customer queries and address them with actionable, localized Myanmar market-oriented solutions:
+   - "အရောင်းပါးတယ် ဘယ်လိုလုပ်ရမလဲ" (Sales are slow, what to do?): Suggest bundling/combos, customer re-engagement (via Viber/phone), promotions on slow-moving items, and visual merchandising.
+   - "အရောင်းမြှင့်ချင်တယ်" / "ရောင်းကောင်းချင်တယ်" (How to boost sales?): Recommend structured discounts (e.g., spend 20,000 Ks get 1,000 Ks off), Buy 1 Get 1, accepting flexible digital payments (KPay, WavePay), and offering loyalty perks.
+   - "ဘာတွေ stock အသစ်တင်ရမလဲ" (What new stock should I buy/add?): Guide them to first prioritize reordering low stock items, check trending/seasonal local demands (e.g. umbrellas in rainy season), analyze their top selling categories, and speak with wholesalers.
+4. Be highly realistic and actionable. Suggest practical steps like "promote item X because stock is high and it sells well" or "reorder item Z because stock is below the threshold".
+5. Do not mention any internal programming or database details.
+6. If there is no context or the context is empty, politely ask them to log more sales or products to get better insights.`;
 
     const modelsToTry = ["gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"];
     let response = null;
