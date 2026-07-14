@@ -4,9 +4,10 @@ import {
   ShoppingCart, Landmark, Wallet, CreditCard, Truck, RefreshCw, Layers,
   Share2, Printer, CheckCircle2, Tag, X, AlertTriangle, Camera, QrCode
 } from "lucide-react";
-import { Html5Qrcode } from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
+import { motion } from "motion/react";
 import { db } from "../firebase";
-import { collection, doc, writeBatch, serverTimestamp, increment } from "firebase/firestore";
+import { collection, doc, writeBatch, serverTimestamp, increment, addDoc } from "firebase/firestore";
 import { Product, CartItem, Customer, ShopSettings } from "../types";
 import { getTheme } from "../lib/theme";
 import { translations, Language } from "../lib/translations";
@@ -23,6 +24,7 @@ interface PosViewProps {
   onHoldOrder: (cart: CartItem[]) => void;
   onViewHeld: () => void;
   onClose: () => void;
+  onMobileCartToggle?: (isOpen: boolean) => void;
 }
 
 export default function PosView({
@@ -37,12 +39,22 @@ export default function PosView({
   onHoldOrder,
   onViewHeld,
   onClose,
+  onMobileCartToggle,
 }: PosViewProps) {
   const t = translations[lang];
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
   const theme = useMemo(() => getTheme(shopSettings.theme), [shopSettings.theme]);
   const [selectedCustomerId, setSelectedCustomerId] = useState("Walk-in");
+  const [customerSearch, setCustomerSearch] = useState(lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer");
+  const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+  const [customCustomerName, setCustomCustomerName] = useState("");
+
+  useEffect(() => {
+    if (selectedCustomerId === "Walk-in") {
+      setCustomerSearch(lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer");
+    }
+  }, [lang]);
   const [globalDiscount, setGlobalDiscount] = useState(0);
   const [globalTax, setGlobalTax] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
@@ -73,7 +85,17 @@ export default function PosView({
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  useEffect(() => {
+    if (onMobileCartToggle) {
+      onMobileCartToggle(mobileCartOpen);
+    }
+  }, [mobileCartOpen, onMobileCartToggle]);
   const [showCameraScanner, setShowCameraScanner] = useState(false);
+
+  // Checkout confirmation modal states
+  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  const [checkoutCustomerName, setCheckoutCustomerName] = useState("");
+  const [checkoutPrintType, setCheckoutPrintType] = useState<"A5" | "Slip">("Slip");
 
   // Manual/Thrift entry state
   const [manualSku, setManualSku] = useState("");
@@ -173,10 +195,23 @@ export default function PosView({
   };
 
   const addProductToCartDirectly = (prod: Product, variant: any | null) => {
+    const itemId = variant ? `${prod.id}_${variant.id}` : prod.id;
+    const existing = cart.find((i) => i.id === itemId);
+    const maxStock = variant ? variant.quantity : prod.quantity;
+    const currentQty = existing ? existing.qty : 0;
+
+    if (currentQty + 1 > maxStock) {
+      alert(
+        lang === "my"
+          ? `"${prod.name}${variant ? ` (${variant.name})` : ""}" အတွက် လက်ကျန်ပစ္စည်းမလုံလောက်တော့ပါ! (လက်ကျန်: ${maxStock})`
+          : `Insufficient stock for "${prod.name}${variant ? ` (${variant.name})` : ""}"! (Available: ${maxStock})`
+      );
+      return;
+    }
+
     setCart((prev) => {
-      const itemId = variant ? `${prod.id}_${variant.id}` : prod.id;
-      const existing = prev.find((i) => i.id === itemId);
-      if (existing) {
+      const existingInPrev = prev.find((i) => i.id === itemId);
+      if (existingInPrev) {
         return prev.map((i) =>
           i.id === itemId ? { ...i, qty: i.qty + 1 } : i
         );
@@ -217,6 +252,19 @@ export default function PosView({
     const matchedProduct = allProducts.find(
       (p) => p.sku === manualSku || p.name === manualName
     );
+
+    if (matchedProduct) {
+      const existingInCart = cart.find((i) => i.id === matchedProduct.id);
+      const currentQty = existingInCart ? existingInCart.qty : 0;
+      if (currentQty + manualQty > matchedProduct.quantity) {
+        alert(
+          lang === "my"
+            ? `"${matchedProduct.name}" အတွက် လက်ကျန်ပစ္စည်းမလုံလောက်တော့ပါ! (လက်ကျန်: ${matchedProduct.quantity})`
+            : `Insufficient stock for "${matchedProduct.name}"! (Available: ${matchedProduct.quantity})`
+        );
+        return;
+      }
+    }
 
     const newItem: CartItem = {
       id: matchedProduct ? matchedProduct.id : "custom-" + Date.now(),
@@ -404,7 +452,7 @@ export default function PosView({
   }, [cartTotals.finalTotal, splitPaymentsSum]);
 
   // Checkout core operation
-  const handleCheckout = async (printType: "A5" | "Slip") => {
+  const startCheckoutFlow = (printType: "A5" | "Slip") => {
     if (cart.length === 0) {
       alert(lang === "my" ? "စျေးဝယ်လှည်းထဲတွင် ကုန်ပစ္စည်း မရှိသေးပါ။" : "No items in cart.");
       return;
@@ -419,28 +467,119 @@ export default function PosView({
       return;
     }
 
-    const customerObj = customers.find((c) => c.id === selectedCustomerId);
-    const customerName = customerObj ? customerObj.name : "Walk-in Customer";
+    // Strict Inventory / Stock Safety Check (Prevent Negative Quantities)
+    for (const item of cart) {
+      if (!item.id.startsWith("custom-")) {
+        const parts = item.id.split("_");
+        const prodId = parts[0];
+        const varId = parts[1];
+        const matchedOriginal = allProducts.find((p) => p.id === prodId);
+        
+        if (matchedOriginal) {
+          if (varId && matchedOriginal.variants) {
+            const vObj = matchedOriginal.variants.find((v) => v.id === varId);
+            if (!vObj) {
+              alert(
+                lang === "my"
+                  ? `ကုန်ပစ္စည်း "${item.name}" ၏ အမျိုးအစားကို ရှာမတွေ့ပါ။`
+                  : `Variant for product "${item.name}" not found.`
+              );
+              return;
+            }
+            if (item.qty > vObj.quantity) {
+              alert(
+                lang === "my"
+                  ? `"${item.name}" အတွက် လက်ကျန်မလုံလောက်ပါ။ (လက်ကျန်: ${vObj.quantity} ခု)`
+                  : `Insufficient stock for "${item.name}"! (Available: ${vObj.quantity} pcs)`
+              );
+              return;
+            }
+          } else {
+            if (item.qty > matchedOriginal.quantity) {
+              alert(
+                lang === "my"
+                  ? `"${item.name}" အတွက် လက်ကျန်မလုံလောက်ပါ။ (လက်ကျန်: ${matchedOriginal.quantity} ခု)`
+                  : `Insufficient stock for "${item.name}"! (Available: ${matchedOriginal.quantity} pcs)`
+              );
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    // Pre-fill customer name
+    let initialName = "";
+    if (selectedCustomerId === "Walk-in") {
+      initialName = "";
+    } else if (selectedCustomerId === "custom") {
+      initialName = customCustomerName.trim();
+    } else {
+      const customerObj = customers.find((c) => c.id === selectedCustomerId);
+      initialName = customerObj ? customerObj.name : "";
+    }
+
+    setCheckoutCustomerName(initialName);
+    setCheckoutPrintType(printType);
+    setIsCheckoutModalOpen(true);
+  };
+
+  // Checkout core operation
+  const handleCheckout = async (printType: "A5" | "Slip", finalCustomerName: string) => {
+    if (cart.length === 0) {
+      return;
+    }
+
+    let customerName = finalCustomerName.trim();
+    if (!customerName) {
+      customerName = "Walk-in Customer";
+    }
 
     try {
       const batch = writeBatch(db);
 
+      // Sanitize items list to avoid undefined field values (e.g. variantId: undefined)
+      const sanitizedItems = cart.map((item) => {
+        const cleanedItem: any = {
+          id: item.id || "",
+          sku: item.sku || "-",
+          name: item.name || "",
+          qty: Number(item.qty) || 0,
+          price: Number(item.price) || 0,
+          costPrice: Number(item.costPrice) || 0,
+          disc: Number(item.disc) || 0,
+        };
+        if (item.variantId !== undefined && item.variantId !== null) {
+          cleanedItem.variantId = item.variantId;
+        }
+        return cleanedItem;
+      });
+
       // Create Sale Record
       const salesRef = doc(collection(db, "shops", shopId, "sales"));
       const saleData = {
-        items: cart,
-        subTotal: cartTotals.subtotal,
-        totalCost: cartTotals.totalCost,
-        discount: cartTotals.discountAmount,
-        tax: globalTax,
-        total: cartTotals.finalTotal,
-        profit: cartTotals.finalTotal - cartTotals.totalCost,
-        paymentMethod: isSplitPayment ? "Split" : paymentMethod,
-        splitPayments: isSplitPayment ? splitPayments.filter((sp) => sp.amount > 0) : null,
-        couponCode: appliedCoupon ? appliedCoupon.code : null,
+        items: sanitizedItems,
+        subTotal: Number(cartTotals.subtotal) || 0,
+        totalCost: Number(cartTotals.totalCost) || 0,
+        discount: Number(cartTotals.discountAmount) || 0,
+        tax: Number(globalTax) || 0,
+        total: Number(cartTotals.finalTotal) || 0,
+        profit: (Number(cartTotals.finalTotal) || 0) - (Number(cartTotals.totalCost) || 0),
+        paymentMethod: (isSplitPayment ? "Split" : paymentMethod) || "Cash",
+        splitPayments: isSplitPayment 
+          ? splitPayments
+              .filter((sp) => sp.amount > 0)
+              .map((sp) => ({
+                method: sp.method || "Cash",
+                amount: Number(sp.amount) || 0,
+              }))
+          : null,
+        couponCode: (appliedCoupon && appliedCoupon.code) ? appliedCoupon.code : null,
         codStatus: paymentMethod === "COD" ? "Pending" : null,
-        customerId: selectedCustomerId === "Walk-in" ? null : selectedCustomerId,
-        customerName,
+        customerId: (selectedCustomerId && selectedCustomerId !== "Walk-in" && selectedCustomerId !== "custom") 
+          ? selectedCustomerId 
+          : null,
+        customerName: customerName || "Walk-in Customer",
         createdAt: serverTimestamp(),
       };
       batch.set(salesRef, saleData);
@@ -477,7 +616,7 @@ export default function PosView({
       });
 
       // Update Customer accounts (Debt points)
-      if (selectedCustomerId !== "Walk-in") {
+      if (selectedCustomerId !== "Walk-in" && selectedCustomerId !== "custom") {
         const customerRef = doc(db, "shops", shopId, "customers", selectedCustomerId);
         const debtIncrease = isSplitPayment 
           ? (splitPayments.find((sp) => sp.method === "Credit")?.amount || 0)
@@ -529,6 +668,9 @@ export default function PosView({
         { method: "WavePay", amount: 0 },
         { method: "Card", amount: 0 },
       ]);
+      setSelectedCustomerId("Walk-in");
+      setCustomerSearch(lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer");
+      setCustomCustomerName("");
       setMobileCartOpen(false);
       onCheckoutSuccess();
     } catch (e: any) {
@@ -656,14 +798,18 @@ export default function PosView({
         {/* Top bar */}
         <div className={`${theme.isLight ? "bg-slate-100/50" : "bg-black/20"} backdrop-blur-md border-b ${theme.border} p-4 flex items-center gap-4 shrink-0 justify-between`}>
           <div className="flex items-center gap-3">
-            <button
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={onClose}
               className={`w-10 h-10 ${theme.isLight ? "bg-slate-200/50 border-slate-300 text-slate-700" : "bg-white/5 border-white/10 text-slate-300"} border rounded-xl transition flex items-center justify-center shrink-0 cursor-pointer`}
             >
               <ArrowLeft size={18} />
-            </button>
+            </motion.button>
             <div className="bg-white/5 border border-white/10 p-1 rounded-xl flex gap-1">
-              <button
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
                 onClick={() => setPosTab("grid")}
                 className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   posTab === "grid"
@@ -672,8 +818,10 @@ export default function PosView({
                 }`}
               >
                 {lang === "my" ? "ကုန်ပစ္စည်းများ" : "Products"}
-              </button>
-              <button
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
                 onClick={() => setPosTab("thrift")}
                 className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   posTab === "thrift"
@@ -682,7 +830,7 @@ export default function PosView({
                 }`}
               >
                 {lang === "my" ? "ကိုယ်တိုင်ထည့်သွင်းမှု" : "Manual Entry"}
-              </button>
+              </motion.button>
             </div>
           </div>
           {posTab === "grid" && (
@@ -714,16 +862,20 @@ export default function PosView({
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* Category selection */}
             <div className={`bg-black/10 border-b ${theme.border} shrink-0 py-3 px-4 overflow-x-auto no-scrollbar flex items-center gap-2`}>
-              <button
+              <motion.button
+                whileHover={{ scale: 1.06 }}
+                whileTap={{ scale: 0.94 }}
                 onClick={() => setShowCameraScanner(true)}
                 className="px-3 py-2 rounded-full text-xs font-black transition-all shrink-0 cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-md flex items-center gap-1.5"
               >
                 <Camera size={14} />
                 <span>{lang === "my" ? "Barcode ဖတ်မည်" : "Scan Barcode"}</span>
-              </button>
+              </motion.button>
               <div className="h-4 w-[1px] bg-white/10 shrink-0" />
               {categories.map((cat) => (
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
                   className={`px-4 py-2 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${
@@ -733,7 +885,7 @@ export default function PosView({
                   }`}
                 >
                   {cat === "All" ? (lang === "my" ? "အားလုံး" : "All") : cat}
-                </button>
+                </motion.button>
               ))}
             </div>
 
@@ -742,11 +894,18 @@ export default function PosView({
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredProducts.map((p) => {
                   const isLow = p.quantity <= (p.lowStockThreshold || 5);
+                  const isOutOfStock = p.quantity <= 0;
                   return (
-                    <div
+                    <motion.div
+                      whileHover={isOutOfStock ? {} : { scale: 1.03, translateY: -4 }}
+                      whileTap={isOutOfStock ? {} : { scale: 0.97 }}
                       key={p.id}
-                      onClick={() => addToCart(p)}
-                      className="bg-[#0a0a0a]/80 backdrop-blur-md rounded-3xl border border-white/5 overflow-hidden cursor-pointer active:scale-95 flex flex-col relative group shadow-sm hover:shadow-lg hover:border-indigo-500/30 transition-all p-3 pb-4"
+                      onClick={() => !isOutOfStock && addToCart(p)}
+                      className={`bg-[#0a0a0a]/80 backdrop-blur-md rounded-3xl border overflow-hidden flex flex-col relative group shadow-sm hover:shadow-lg transition-all p-3 pb-4 ${
+                        isOutOfStock 
+                          ? "opacity-40 border-rose-500/20 cursor-not-allowed" 
+                          : "border-white/5 hover:border-indigo-500/30 cursor-pointer"
+                      }`}
                     >
                       <div className="h-24 bg-white/5 rounded-2xl flex items-center justify-center mb-3 relative overflow-hidden group-hover:bg-white/10 transition">
                         <Layers size={36} className="text-slate-600 group-hover:text-indigo-400 transition" />
@@ -755,9 +914,11 @@ export default function PosView({
                             {p.category}
                           </span>
                         )}
-                        <div className="absolute inset-0 bg-indigo-500/10 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
-                          <Plus size={24} className="text-indigo-400" />
-                        </div>
+                        {!isOutOfStock && (
+                          <div className="absolute inset-0 bg-indigo-500/10 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                            <Plus size={24} className="text-indigo-400" />
+                          </div>
+                        )}
                       </div>
                       <div className="text-xs font-bold leading-tight mb-2 text-white line-clamp-2 h-8 font-display">
                         {p.name}
@@ -769,15 +930,19 @@ export default function PosView({
                         </div>
                         <div
                           className={`text-[9px] px-2 py-0.5 rounded-lg border font-bold ${
-                            isLow
+                            isOutOfStock
+                              ? "text-rose-500 bg-rose-500/20 border-rose-500/30 font-black"
+                              : isLow
                               ? "text-rose-400 bg-rose-500/10 border-rose-500/20"
                               : "text-slate-400 bg-white/5 border-white/10"
                           }`}
                         >
-                          {p.quantity}{lang === "my" ? "ခုကျန်" : " left"}
+                          {isOutOfStock 
+                            ? (lang === "my" ? "ရောင်းကုန်ပြီ" : "Out of Stock") 
+                            : `${p.quantity}${lang === "my" ? "ခုကျန်" : " left"}`}
                         </div>
                       </div>
-                    </div>
+                    </motion.div>
                   );
                 })}
               </div>
@@ -896,7 +1061,7 @@ export default function PosView({
 
       {/* Cart Sidebar (Desktop/Mobile overlay) */}
       <div
-        className={`fixed lg:static inset-y-0 right-0 z-40 w-[90%] sm:w-[400px] lg:w-[380px] xl:w-[420px] bg-[#0a0a0a] border-l border-white/5 shadow-2xl lg:shadow-none transform ${
+        className={`fixed lg:static inset-y-0 right-0 z-50 w-[90%] sm:w-[400px] lg:w-[380px] xl:w-[420px] bg-[#0a0a0a] border-l border-white/5 shadow-2xl lg:shadow-none transform ${
           mobileCartOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"
         } transition-transform duration-300 flex flex-col h-full`}
       >
@@ -906,14 +1071,18 @@ export default function PosView({
             <ShoppingCart size={18} className="text-indigo-400" /> {lang === "my" ? "လတ်တလော အော်ဒါ" : "Current Order"}
           </h2>
           <div className="flex items-center gap-2">
-            <button
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={handleHold}
               title={lang === "my" ? "ခေတ္တရပ်ဆိုင်းထားမည်" : "Hold voucher"}
               className="px-2.5 py-1.5 text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl hover:bg-amber-500/20 transition cursor-pointer"
             >
               {lang === "my" ? "ခဏရပ်" : "Hold"}
-            </button>
-            <button
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={onViewHeld}
               className="px-2.5 py-1.5 text-xs font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded-xl hover:bg-indigo-500/20 transition relative cursor-pointer"
             >
@@ -923,41 +1092,153 @@ export default function PosView({
                   {heldOrdersCount}
                 </span>
               )}
-            </button>
-            <button
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={() => setCart([])}
               className="text-xs font-bold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2.5 py-1.5 rounded-xl hover:bg-rose-500/20 transition cursor-pointer"
             >
               {lang === "my" ? "ဖျက်မည်" : "Clear"}
-            </button>
-            <button
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={() => setMobileCartOpen(false)}
               className="lg:hidden p-1.5 text-slate-400 hover:bg-white/5 border border-white/10 rounded-xl cursor-pointer"
             >
               {lang === "my" ? "ပိတ်" : "Close"}
-            </button>
+            </motion.button>
           </div>
         </div>
 
         {/* Scrollable Container for Sidebar Contents (Fixes Mobile Checkout Overlap) */}
-        <div className="flex-1 overflow-y-auto no-scrollbar flex flex-col justify-between">
-          <div className="p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4">
             {/* Customer & global wholesale toggle */}
-            <div className="bg-white/5 p-3 rounded-2xl border border-white/10 shadow-sm">
-              <div className="flex items-center gap-2 bg-black/20 px-3 py-2 rounded-xl border border-white/5 shadow-inner">
-                <User className="text-slate-400" size={14} />
-                <select
-                  value={selectedCustomerId}
-                  onChange={(e) => setSelectedCustomerId(e.target.value)}
-                  className="flex-1 bg-transparent border-none outline-none text-xs font-bold text-slate-200 cursor-pointer"
-                >
-                  <option value="Walk-in" className="bg-[#0a0a0a] text-slate-200">{lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer"}</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-[#0a0a0a] text-slate-200">
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+            <div className="bg-white/5 p-3 rounded-2xl border border-white/10 shadow-sm relative">
+              <div className="relative">
+                <div className="flex items-center gap-2 bg-black/20 px-3 py-2 rounded-xl border border-white/5 shadow-inner">
+                  <User className="text-slate-400 shrink-0" size={14} />
+                  <input
+                    type="text"
+                    value={customerSearch}
+                    onFocus={() => setIsCustomerDropdownOpen(true)}
+                    onBlur={() => {
+                      // Small delay to allow clicking options before dropdown closes
+                      setTimeout(() => setIsCustomerDropdownOpen(false), 200);
+                    }}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomerSearch(val);
+                      setIsCustomerDropdownOpen(true);
+                      
+                      const trimmed = val.trim();
+                      if (!trimmed || trimmed.toLowerCase() === "walk-in" || trimmed === "ဆိုင်လာဝယ်သူ" || trimmed === "Walk-in Customer") {
+                        setSelectedCustomerId("Walk-in");
+                        setCustomCustomerName("");
+                      } else {
+                        const exactMatch = customers.find(c => c.name.toLowerCase() === trimmed.toLowerCase());
+                        if (exactMatch) {
+                          setSelectedCustomerId(exactMatch.id);
+                        } else {
+                          setSelectedCustomerId("custom");
+                          setCustomCustomerName(trimmed);
+                        }
+                      }
+                    }}
+                    placeholder={lang === "my" ? "ဝယ်သူအမည် ရှာရန် သို့မဟုတ် ရိုက်ထည့်ရန်..." : "Search or enter customer name..."}
+                    className="flex-1 bg-transparent border-none outline-none text-xs font-bold text-[#f1f5f9]"
+                  />
+                  {customerSearch && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCustomerId("Walk-in");
+                        setCustomerSearch(lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer");
+                        setCustomCustomerName("");
+                      }}
+                      className="text-slate-500 hover:text-slate-300 text-xs px-1 cursor-pointer font-bold shrink-0"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                {/* Dropdown panel */}
+                {isCustomerDropdownOpen && (
+                  <div className="absolute left-0 right-0 mt-1 bg-[#121212] border border-white/10 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-white/5 no-scrollbar">
+                    {/* Walk-in Option */}
+                    <div
+                      onMouseDown={() => {
+                        setSelectedCustomerId("Walk-in");
+                        setCustomerSearch(lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer");
+                        setCustomCustomerName("");
+                        setIsCustomerDropdownOpen(false);
+                      }}
+                      className="px-3 py-2 text-xs text-slate-300 hover:bg-white/5 cursor-pointer font-bold flex justify-between items-center"
+                    >
+                      <span>{lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer"}</span>
+                      {selectedCustomerId === "Walk-in" && <span className="text-indigo-400 text-[10px]">✓</span>}
+                    </div>
+
+                    {/* Filtered customers */}
+                    {customers
+                      .filter(c => 
+                        c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
+                        (c.phone && c.phone.includes(customerSearch))
+                      )
+                      .map((c) => (
+                        <div
+                          key={c.id}
+                          onMouseDown={() => {
+                            setSelectedCustomerId(c.id);
+                            setCustomerSearch(c.name);
+                            setIsCustomerDropdownOpen(false);
+                          }}
+                          className="px-3 py-2 text-xs text-slate-200 hover:bg-white/5 cursor-pointer flex justify-between items-center"
+                        >
+                          <div>
+                            <span className="font-bold block">{c.name}</span>
+                            {c.phone && <span className="text-[10px] text-slate-500 block">{c.phone}</span>}
+                          </div>
+                          {selectedCustomerId === c.id && <span className="text-indigo-400 text-[10px]">✓</span>}
+                        </div>
+                      ))}
+
+                    {/* Quick creation of a new customer if it's custom and name is typed */}
+                    {selectedCustomerId === "custom" && customerSearch.trim() !== "" && (
+                      <div
+                        onMouseDown={async (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newName = customerSearch.trim();
+                          try {
+                            const docRef = await addDoc(collection(db, "shops", shopId, "customers"), {
+                              name: newName,
+                              phone: "",
+                              points: 0,
+                              debt: 0,
+                            });
+                            setSelectedCustomerId(docRef.id);
+                            setCustomerSearch(newName);
+                            setIsCustomerDropdownOpen(false);
+                            alert(lang === "my" ? `ဝယ်သူအသစ် "${newName}" အား သိမ်းဆည်းပြီးပါပြီ။` : `Registered customer "${newName}" successfully!`);
+                          } catch (err: any) {
+                            alert("Error saving customer: " + err.message);
+                          }
+                        }}
+                        className="px-3 py-2.5 text-xs text-indigo-400 hover:bg-white/5 hover:text-indigo-300 cursor-pointer font-black flex items-center gap-2"
+                      >
+                        <Plus size={12} />
+                        <span>
+                          {lang === "my" 
+                            ? `"${customerSearch}" ကို ဝယ်သူအသစ်အဖြစ် စာရင်းသွင်းမည်` 
+                            : `Register "${customerSearch}" as new customer`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 flex items-center justify-between text-[11px] font-black text-slate-400">
@@ -1117,10 +1398,10 @@ export default function PosView({
                 </div>
               )}
             </div>
-          </div>
+        </div>
 
-          {/* Pricing Actions */}
-          <div className="p-4 bg-[#0a0a0a] border-t border-white/5 shadow-md shrink-0">
+        {/* Pricing Actions (Sticky Footer) */}
+        <div className="p-4 bg-[#0a0a0a] border-t border-white/10 shadow-2xl shrink-0">
             {!isSplitPayment && (
               <div className="mb-3">
                 <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-2">{lang === "my" ? "ငွေပေးချေမှုနည်းလမ်း" : "Payment Method"}</p>
@@ -1133,7 +1414,9 @@ export default function PosView({
                     { label: "Credit", icon: <CreditCard size={12} /> },
                     { label: "COD", icon: <Truck size={12} /> },
                   ].map((pm) => (
-                    <button
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
                       key={pm.label}
                       onClick={() => setPaymentMethod(pm.label)}
                       className={`py-2 px-1 rounded-xl text-[10px] font-black flex items-center justify-center gap-1 border transition-all cursor-pointer ${
@@ -1144,7 +1427,7 @@ export default function PosView({
                     >
                       {pm.icon}
                       {pm.label}
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
               </div>
@@ -1173,6 +1456,46 @@ export default function PosView({
 
             {/* Totals Summary */}
             <div className="space-y-1 text-xs font-semibold mb-4 border-t border-white/5 pt-3">
+              <div 
+                onClick={() => {
+                  const askName = prompt(
+                    lang === "my" 
+                      ? "ဝယ်သူအမည်အသစ် သို့မဟုတ် ဆိုင်လာဝယ်သူအမည် ထည့်ပါ -" 
+                      : "Enter new customer name -"
+                  );
+                  if (askName !== null) {
+                    const nameToUse = askName.trim();
+                    if (!nameToUse) {
+                      setSelectedCustomerId("Walk-in");
+                      setCustomerSearch(lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer");
+                      setCustomCustomerName("");
+                    } else {
+                      const matched = customers.find(c => c.name.toLowerCase() === nameToUse.toLowerCase());
+                      if (matched) {
+                        setSelectedCustomerId(matched.id);
+                        setCustomerSearch(matched.name);
+                      } else {
+                        setSelectedCustomerId("custom");
+                        setCustomCustomerName(nameToUse);
+                        setCustomerSearch(nameToUse);
+                      }
+                    }
+                  }
+                }}
+                className="flex justify-between items-center text-slate-400 py-1 border-b border-white/5 mb-1 cursor-pointer hover:bg-white/5 px-1 rounded transition"
+                title={lang === "my" ? "ဝယ်သူအမည် ပြောင်းရန် နှိပ်ပါ" : "Click to change customer name"}
+              >
+                <span>{lang === "my" ? "ဝယ်သူအမည်" : "Customer"}</span>
+                <span className="font-bold text-indigo-400 flex items-center gap-1 font-display">
+                  {selectedCustomerId === "Walk-in" 
+                    ? (lang === "my" ? "ဆိုင်လာဝယ်သူ" : "Walk-in Customer")
+                    : selectedCustomerId === "custom"
+                    ? (customCustomerName || "Walk-in Customer")
+                    : (customers.find(c => c.id === selectedCustomerId)?.name || "Walk-in Customer")
+                  }
+                  <span className="text-[10px] text-slate-500">✎</span>
+                </span>
+              </div>
               <div className="flex justify-between text-slate-400 font-display">
                 <span>{lang === "my" ? "စုစုပေါင်း" : "Subtotal"}</span>
                 <span>{cartTotals.subtotal.toLocaleString()} Ks</span>
@@ -1192,28 +1515,31 @@ export default function PosView({
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleCheckout("A5")}
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => startCheckoutFlow("A5")}
                 className="bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-bold py-3.5 rounded-xl text-xs transition cursor-pointer"
               >
                 Print A5
-              </button>
-              <button
-                onClick={() => handleCheckout("Slip")}
-                className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:brightness-110 active:scale-95 text-white font-black py-3.5 rounded-xl text-xs transition flex items-center justify-center gap-1 shadow-lg shadow-indigo-500/20 cursor-pointer"
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => startCheckoutFlow("Slip")}
+                className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:brightness-110 text-white font-black py-3.5 rounded-xl text-xs transition flex items-center justify-center gap-1 shadow-lg shadow-indigo-500/20 cursor-pointer"
               >
                 {lang === "my" ? "ငွေရှင်းမည်" : "Checkout"}
-              </button>
+              </motion.button>
             </div>
           </div>
-        </div>
       </div>
 
       {/* Overlay background on mobile */}
       {mobileCartOpen && (
         <div
           onClick={() => setMobileCartOpen(false)}
-          className="lg:hidden fixed inset-0 bg-black/80 backdrop-blur-xs z-30"
+          className="lg:hidden fixed inset-0 bg-black/80 backdrop-blur-xs z-45"
         />
       )}
 
@@ -1230,6 +1556,94 @@ export default function PosView({
         }`}>
           <Tag size={16} />
           <span className="text-xs font-black">{scanMessage}</span>
+        </div>
+      )}
+
+      {/* Checkout Confirmation & Custom Customer Name Modal */}
+      {isCheckoutModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-55 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-[#0c0c0c] border border-white/10 w-full max-w-md rounded-3xl p-6 shadow-2xl relative space-y-4"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                <ShoppingCart size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white font-display">
+                  {lang === "my" ? "ငွေရှင်းပြီး ဘောက်ချာထုတ်မည်" : "Confirm & Print Receipt"}
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  {lang === "my" ? "ငွေရှင်းရန် အချက်အလက်များ အတည်ပြုပေးပါ" : "Please confirm the transaction details"}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-3">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-400">{lang === "my" ? "ကျသင့်ငွေ" : "Total Amount"}</span>
+                <span className="text-base font-black text-indigo-400 font-display">
+                  {cartTotals.finalTotal.toLocaleString()} Ks
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
+                <span className="text-slate-400">{lang === "my" ? "ငွေပေးချေမှု" : "Payment Method"}</span>
+                <span className="font-bold text-slate-200">
+                  {isSplitPayment ? (lang === "my" ? "ခွဲဝေပေးချေမှု" : "Split Payment") : paymentMethod}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
+                <span className="text-slate-400">{lang === "my" ? "ပုံစံ" : "Receipt Format"}</span>
+                <span className="font-bold text-slate-200">
+                  {checkoutPrintType === "A5" ? "A5 Format" : "Slip Format"}
+                </span>
+              </div>
+            </div>
+
+            {/* Customer Name Input Field */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider block">
+                {lang === "my" ? "ဝယ်သူအမည်" : "Customer Name"}
+              </label>
+              <div className="flex items-center gap-2 bg-black/40 px-3 py-2.5 rounded-xl border border-white/10 shadow-inner">
+                <User className="text-slate-400 shrink-0" size={14} />
+                <input
+                  type="text"
+                  value={checkoutCustomerName}
+                  onChange={(e) => setCheckoutCustomerName(e.target.value)}
+                  placeholder={lang === "my" ? "ဆိုင်လာဝယ်သူ (အမည်မရှိ)" : "Walk-in Customer (No Name)"}
+                  className="flex-1 bg-transparent border-none outline-none text-xs font-bold text-[#f1f5f9] placeholder-slate-600"
+                  autoFocus
+                />
+              </div>
+              <p className="text-[10px] text-slate-500">
+                {lang === "my" 
+                  ? "ဝယ်သူအမည်ကို ဤနေရာတွင် တိုက်ရိုက်ရိုက်ထည့်နိုင်ပါသည်" 
+                  : "You can enter or edit the customer's name directly for this voucher."}
+              </p>
+            </div>
+
+            {/* Action buttons */}
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button
+                onClick={() => setIsCheckoutModalOpen(false)}
+                className="bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-bold py-3 rounded-xl text-xs transition cursor-pointer"
+              >
+                {lang === "my" ? "ပယ်ဖျက်မည်" : "Cancel"}
+              </button>
+              <button
+                onClick={() => {
+                  setIsCheckoutModalOpen(false);
+                  handleCheckout(checkoutPrintType, checkoutCustomerName);
+                }}
+                className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:brightness-110 text-white font-black py-3 rounded-xl text-xs transition shadow-lg shadow-indigo-500/20 cursor-pointer flex items-center justify-center gap-1"
+              >
+                {lang === "my" ? "အတည်ပြုမည်" : "Confirm"}
+              </button>
+            </div>
+          </motion.div>
         </div>
       )}
 
@@ -1403,19 +1817,38 @@ function CameraScannerModal({
     const timer = setTimeout(() => {
       if (!isMounted) return;
       try {
-        html5QrCode = new Html5Qrcode("reader");
+        html5QrCode = new Html5Qrcode("reader", {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.ITF,
+            Html5QrcodeSupportedFormats.QR_CODE
+          ],
+          verbose: false
+        });
         html5QrCode.start(
-          { facingMode: "environment" },
+          { 
+            facingMode: "environment",
+            width: { min: 640, ideal: 1280, max: 1920 },
+            height: { min: 480, ideal: 720, max: 1080 }
+          },
           {
-            fps: 15,
+            fps: 24,
             qrbox: (width, height) => {
-              // Rectangle box styled specifically for scan line targeting
+              // Rectangle box styled specifically for scan line targeting of 1D barcodes
               return {
-                width: Math.min(width * 0.85, 280),
-                height: Math.min(height * 0.35, 120),
+                width: Math.min(width * 0.9, 320),
+                height: Math.min(height * 0.45, 140),
               };
             },
-          },
+            experimentalFeatures: {
+              useBarCodeDetectorIfSupported: true
+            }
+          } as any,
           (decodedText) => {
             onScan(decodedText);
             onClose();
