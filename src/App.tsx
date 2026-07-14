@@ -3,7 +3,7 @@ import {
   Store, Settings, LogOut, ArrowLeft, Plus, Search, 
   Trash2, Layers, Landmark, BarChart3, Brain, LayoutDashboard, 
   ShoppingCart, Package, ListChecks, Users, HelpCircle, Truck, 
-  Clock, DollarSign, ArrowUpRight
+  Clock, DollarSign, ArrowUpRight, TrendingUp, Award, Percent, Calendar
 } from "lucide-react";
 import { auth, db } from "./firebase";
 import { 
@@ -19,11 +19,14 @@ import { getTheme } from "./lib/theme";
 import PosView from "./components/PosView";
 import Modals from "./components/Modals";
 import AiAnalyst from "./components/AiAnalyst";
+import MasterAdminPanel from "./components/MasterAdminPanel";
 import { translations, Language } from "./lib/translations";
+import { motion } from "motion/react";
 
 export default function App() {
   // Authentication & session state
   const [user, setUser] = useState<any>(null);
+  const [currentUserData, setCurrentUserData] = useState<any>(null);
   const [shopId, setShopId] = useState<string | null>(null);
   const [shopName, setShopName] = useState("My Store");
   const [shopSettings, setShopSettings] = useState<ShopSettings>({
@@ -71,8 +74,12 @@ export default function App() {
   // Search in inventory
   const [invSearch, setInvSearch] = useState("");
 
+  // Report active date filter
+  const [reportPeriod, setReportPeriod] = useState<"today" | "yesterday" | "week" | "month" | "all">("all");
+
   // Track held carts globally
   const [heldOrders, setHeldOrders] = useState<any[]>([]);
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
   // --- Auth State Listener ---
   useEffect(() => {
@@ -82,6 +89,14 @@ export default function App() {
       setShopId("master_shop");
       setShopName("SWIFT POS");
       setUser({ uid: "master_user", email: "master@pos.local" });
+      setCurrentUserData({
+        shopId: "master_shop",
+        shopName: "SWIFT POS",
+        username: "master",
+        role: "admin",
+        expiryDate: new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000).toISOString(),
+        createdAt: new Date().toISOString()
+      });
       return;
     }
 
@@ -121,7 +136,7 @@ export default function App() {
               shopName: "My Store",
               username: emailPrefix || "user",
               role: "user",
-              expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year default
+              expiryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days trial default
               createdAt: new Date().toISOString()
             };
 
@@ -145,17 +160,20 @@ export default function App() {
             signOut(auth);
             setUser(null);
             setShopId(null);
+            setCurrentUserData(null);
             return;
           }
 
           setShopId(userData.shopId);
           setShopName(userData.shopName || "My Store");
+          setCurrentUserData(userData);
         } catch (error: any) {
           console.error("Auth bootstrap error:", error);
         }
       } else {
         setUser(null);
         setShopId(null);
+        setCurrentUserData(null);
       }
     });
     return () => unsub();
@@ -307,7 +325,7 @@ export default function App() {
         shopName: chosenShopName,
         username: usernameTrimmed,
         role: "user",
-        expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        expiryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days free trial default
         createdAt: new Date().toISOString()
       };
 
@@ -345,8 +363,15 @@ export default function App() {
     signOut(auth);
     setUser(null);
     setShopId(null);
+    setCurrentUserData(null);
     setCurrentView("dashboard");
   };
+
+  const licenseDaysLeft = useMemo(() => {
+    if (!currentUserData || !currentUserData.expiryDate) return null;
+    const diff = new Date(currentUserData.expiryDate).getTime() - Date.now();
+    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+  }, [currentUserData]);
 
   // --- Dashboard Real-time Stats Computations ---
   const dashboardStats = useMemo(() => {
@@ -375,14 +400,101 @@ export default function App() {
   }, [salesHistory, customers]);
 
   // --- Reports Tab Computations ---
+  const filteredSalesForReport = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    
+    const startOfWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const startOfMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    return salesHistory.filter((s) => {
+      if (!s.createdAt) return false;
+      const sDate = s.createdAt.toDate ? s.createdAt.toDate() : new Date(s.createdAt);
+      
+      if (reportPeriod === "today") {
+        return sDate >= startOfToday;
+      } else if (reportPeriod === "yesterday") {
+        return sDate >= startOfYesterday && sDate < startOfToday;
+      } else if (reportPeriod === "week") {
+        return sDate >= startOfWeek;
+      } else if (reportPeriod === "month") {
+        return sDate >= startOfMonth;
+      }
+      return true; // "all"
+    });
+  }, [salesHistory, reportPeriod]);
+
+  const filteredExpensesForReport = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const startOfWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const startOfMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    return expenses.filter((e) => {
+      if (!e.createdAt) return true;
+      const eDate = e.createdAt.toDate ? e.createdAt.toDate() : new Date(e.createdAt);
+      if (reportPeriod === "today") return eDate >= startOfToday;
+      if (reportPeriod === "yesterday") return eDate >= startOfYesterday && eDate < startOfToday;
+      if (reportPeriod === "week") return eDate >= startOfWeek;
+      if (reportPeriod === "month") return eDate >= startOfMonth;
+      return true;
+    });
+  }, [expenses, reportPeriod]);
+
+  const filteredPurchasesForReport = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const startOfWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const startOfMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    return purchases.filter((p) => {
+      if (!p.createdAt) return true;
+      const pDate = p.createdAt.toDate ? p.createdAt.toDate() : new Date(p.createdAt);
+      if (reportPeriod === "today") return pDate >= startOfToday;
+      if (reportPeriod === "yesterday") return pDate >= startOfYesterday && pDate < startOfToday;
+      if (reportPeriod === "week") return pDate >= startOfWeek;
+      if (reportPeriod === "month") return pDate >= startOfMonth;
+      return true;
+    });
+  }, [purchases, reportPeriod]);
+
+  const filteredPayrollForReport = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const startOfWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const startOfMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    return payroll.filter((p) => {
+      if (!p.createdAt) return true;
+      const pDate = p.createdAt.toDate ? p.createdAt.toDate() : new Date(p.createdAt);
+      if (reportPeriod === "today") return pDate >= startOfToday;
+      if (reportPeriod === "yesterday") return pDate >= startOfYesterday && pDate < startOfToday;
+      if (reportPeriod === "week") return pDate >= startOfWeek;
+      if (reportPeriod === "month") return pDate >= startOfMonth;
+      return true;
+    });
+  }, [payroll, reportPeriod]);
+
   const reportTotals = useMemo(() => {
-    const totalRev = salesHistory.reduce((sum, s) => sum + (s.total || 0), 0);
-    const totalCost = salesHistory.reduce((sum, s) => sum + (s.totalCost || 0), 0);
-    const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-    const totalPurchases = purchases.reduce((sum, p) => sum + (p.amount || 0), 0);
-    const totalPayroll = payroll.reduce((sum, p) => sum + (p.amount || 0), 0);
+    const totalRev = filteredSalesForReport.reduce((sum, s) => sum + (s.total || 0), 0);
+    const totalCost = filteredSalesForReport.reduce((sum, s) => sum + (s.totalCost || 0), 0);
+    const totalExpenses = filteredExpensesForReport.reduce((sum, e) => sum + (e.amount || 0), 0);
+    const totalPurchases = filteredPurchasesForReport.reduce((sum, p) => sum + (p.amount || 0), 0);
+    const totalPayroll = filteredPayrollForReport.reduce((sum, p) => sum + (p.amount || 0), 0);
 
     const netProfit = totalRev - totalCost - totalExpenses - totalPayroll;
+    const grossMargin = totalRev > 0 ? ((totalRev - totalCost) / totalRev) * 100 : 0;
+    const salesCount = filteredSalesForReport.length;
+    const avgVoucher = salesCount > 0 ? totalRev / salesCount : 0;
 
     return {
       totalRev,
@@ -391,8 +503,95 @@ export default function App() {
       totalPurchases,
       totalPayroll,
       netProfit,
+      grossMargin,
+      salesCount,
+      avgVoucher,
     };
-  }, [salesHistory, expenses, purchases, payroll]);
+  }, [filteredSalesForReport, filteredExpensesForReport, filteredPurchasesForReport, filteredPayrollForReport]);
+
+  const topSellingProducts = useMemo(() => {
+    const productsMap: { [name: string]: { qty: number; revenue: number } } = {};
+    
+    filteredSalesForReport.forEach((sale) => {
+      const items = sale.items || [];
+      items.forEach((item: any) => {
+        const name = item.name || "Unknown Item";
+        const qty = item.qty || 0;
+        const price = item.price || 0;
+        const totalItemRev = qty * price;
+
+        if (!productsMap[name]) {
+          productsMap[name] = { qty: 0, revenue: 0 };
+        }
+        productsMap[name].qty += qty;
+        productsMap[name].revenue += totalItemRev;
+      });
+    });
+
+    return Object.keys(productsMap)
+      .map((name) => ({
+        name,
+        qty: productsMap[name].qty,
+        revenue: productsMap[name].revenue,
+      }))
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, 5);
+  }, [filteredSalesForReport]);
+
+  const paymentMethodsBreakdown = useMemo(() => {
+    const methods = ["Cash", "KPay", "WavePay", "AYA Pay", "Credit", "COD"];
+    const counts: { [method: string]: number } = {};
+    methods.forEach((m) => (counts[m] = 0));
+
+    filteredSalesForReport.forEach((s) => {
+      const pm = s.paymentMethod || "Cash";
+      const total = s.total || 0;
+      if (counts[pm] !== undefined) {
+        counts[pm] += total;
+      } else {
+        counts[pm] = total;
+      }
+    });
+
+    const totalSales = Object.values(counts).reduce((sum, v) => sum + v, 0);
+
+    return Object.keys(counts).map((method) => {
+      const amount = counts[method];
+      const percentage = totalSales > 0 ? (amount / totalSales) * 100 : 0;
+      return {
+        method,
+        amount,
+        percentage,
+      };
+    }).sort((a, b) => b.amount - a.amount);
+  }, [filteredSalesForReport]);
+
+  const last7DaysSales = useMemo(() => {
+    const result = [];
+    const now = new Date();
+    
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(now.getDate() - i);
+      const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      const startOfD = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const endOfD = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+
+      const totalForD = salesHistory
+        .filter((s) => {
+          if (!s.createdAt) return false;
+          const sDate = s.createdAt.toDate ? s.createdAt.toDate() : new Date(s.createdAt);
+          return sDate >= startOfD && sDate < endOfD;
+        })
+        .reduce((sum, s) => sum + (s.total || 0), 0);
+
+      result.push({
+        dateLabel: dateStr,
+        amount: totalForD,
+      });
+    }
+    return result;
+  }, [salesHistory]);
 
   const filteredInventoryProducts = useMemo(() => {
     if (!invSearch) return allProducts;
@@ -417,7 +616,9 @@ export default function App() {
 
         {/* Floating Language Selector at Top Right */}
         <div className="absolute top-4 right-4 z-20 flex gap-1 bg-[#0a0a0a]/80 p-1 rounded-xl border border-white/10">
-          <button
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={() => {
               setLang("en");
               localStorage.setItem("lang", "en");
@@ -427,8 +628,10 @@ export default function App() {
             }`}
           >
             EN
-          </button>
-          <button
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={() => {
               setLang("my");
               localStorage.setItem("lang", "my");
@@ -438,7 +641,7 @@ export default function App() {
             }`}
           >
             မြန်မာ
-          </button>
+          </motion.button>
         </div>
 
         <div className="w-full max-w-sm text-center bg-[#0a0a0a]/90 border border-white/5 p-8 rounded-[2rem] shadow-2xl relative z-10 backdrop-blur-md">
@@ -487,18 +690,22 @@ export default function App() {
               </div>
             )}
             {loginErr && <p className="text-rose-500 text-xs font-bold mt-2">{loginErr}</p>}
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               type="submit"
               disabled={loginLoading}
-              className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:brightness-110 active:scale-95 text-white font-black py-4 rounded-2xl shadow-lg shadow-indigo-500/20 transition-all text-sm mt-6 disabled:opacity-50 cursor-pointer"
+              className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:brightness-110 text-white font-black py-4 rounded-2xl shadow-lg shadow-indigo-500/20 transition-all text-sm mt-6 disabled:opacity-50 cursor-pointer"
             >
               {loginLoading ? (isRegisterMode ? t.signingUp : t.loggingIn) : (isRegisterMode ? t.signUp : t.login)}
-            </button>
+            </motion.button>
           </form>
 
           {/* Toggle Mode Button */}
           <div className="mt-6 pt-4 border-t border-white/5">
-            <button
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={() => {
                 setIsRegisterMode(!isRegisterMode);
                 setLoginErr("");
@@ -506,9 +713,17 @@ export default function App() {
               className="text-xs font-bold text-indigo-400 hover:text-indigo-300 transition cursor-pointer"
             >
               {isRegisterMode ? t.haveAccount : t.noAccount}
-            </button>
+            </motion.button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (shopId === "master_shop") {
+    return (
+      <div className="h-[100vh] flex flex-col w-full bg-[#060606] relative overflow-hidden font-sans">
+        <MasterAdminPanel lang={lang} onLogout={handleLogout} />
       </div>
     );
   }
@@ -554,7 +769,9 @@ export default function App() {
           <div className="flex items-center gap-2">
             {/* Premium Language Pill Toggle */}
             <div className={`flex ${theme.isLight ? "bg-slate-200/50" : "bg-white/5"} p-1 rounded-full border ${theme.border} text-[10px] mr-1`}>
-              <button
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => {
                   setLang("en");
                   localStorage.setItem("lang", "en");
@@ -564,8 +781,10 @@ export default function App() {
                 }`}
               >
                 EN
-              </button>
-              <button
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => {
                   setLang("my");
                   localStorage.setItem("lang", "my");
@@ -575,23 +794,27 @@ export default function App() {
                 }`}
               >
                 MY
-              </button>
+              </motion.button>
             </div>
 
-            <button
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={() => setActiveModal("settings")}
               className={`w-10 h-10 ${theme.isLight ? "bg-slate-200/50 border-slate-300 text-slate-700" : "bg-white/5 border-white/10 text-slate-300"} border rounded-full flex items-center justify-center shadow-sm hover:opacity-85 transition cursor-pointer`}
               title={t.systemSettings}
             >
               <Settings size={18} />
-            </button>
-            <button
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={handleLogout}
               className="w-10 h-10 bg-rose-500/10 border border-rose-500/20 rounded-full flex items-center justify-center text-rose-400 shadow-sm hover:bg-rose-500/20 transition cursor-pointer"
               title={t.logout}
             >
               <LogOut size={18} />
-            </button>
+            </motion.button>
           </div>
         </header>
       )}
@@ -601,6 +824,52 @@ export default function App() {
         {/* VIEW 1: DASHBOARD */}
         {currentView === "dashboard" && (
           <div className="w-full h-full overflow-y-auto px-4 sm:px-6 pb-24 no-scrollbar space-y-6 pt-2">
+            {/* SaaS Client License Status Banner */}
+            {currentUserData && shopId !== "master_shop" && (
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-inner">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                    licenseDaysLeft !== null && licenseDaysLeft <= 5 
+                      ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" 
+                      : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                  }`}>
+                    <Calendar size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-white font-display">
+                      {lang === "my" ? "စနစ်အသုံးပြုခွင့် လိုင်စင်အခြေအနေ" : "System License Status"}
+                    </h4>
+                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5 font-mono">
+                      {lang === "my" 
+                        ? `လိုင်စင်သက်တမ်းကုန်ဆုံးရန် ${licenseDaysLeft} ရက် ကျန်ပါသေးသည်` 
+                        : `${licenseDaysLeft} days remaining on your active license`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-md ${
+                    licenseDaysLeft !== null && licenseDaysLeft <= 3 
+                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" 
+                      : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  }`}>
+                    {licenseDaysLeft !== null && licenseDaysLeft <= 3 
+                      ? (lang === "my" ? "စမ်းသပ်အသုံးပြုမှု" : "Trial Account") 
+                      : (lang === "my" ? "လုပ်ငန်းသုံးလိုင်စင်" : "Premium License")}
+                  </span>
+                  <button 
+                    onClick={() => alert(
+                      lang === "my" 
+                        ? "စနစ်လိုင်စင် သက်တမ်းတိုးရန် သို့မဟုတ် ဝယ်ယူရန်အတွက် ကျေးဇူးပြု၍ မာစတာစနစ်စီမံခန့်ခွဲသူ (သို့မဟုတ် ဖုန်းနံပါတ်/Viber) သို့ ဆက်သွယ်ဆောင်ရွက်ပေးပါရန်။" 
+                        : "To extend or purchase a full system license, please contact your System Administrator directly."
+                    )}
+                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-[10px] font-black border border-white/5 text-indigo-400 rounded-lg transition"
+                  >
+                    {lang === "my" ? "သက်တမ်းတိုးရန် ဆက်သွယ်ရန်" : "Renew License"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Call to action POS banner */}
             <div className={`bg-gradient-to-br ${theme.gradient} rounded-[2rem] p-6 shadow-xl relative overflow-hidden text-white shrink-0`}>
               <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-1/4 translate-y-1/4">
@@ -609,12 +878,14 @@ export default function App() {
               <div className="relative z-10">
                 <h2 className="font-black text-2xl mb-1 font-display">{t.posBannerTitle}</h2>
                 <p className="text-indigo-100 text-xs mb-5 font-semibold">{t.posBannerSub}</p>
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => setCurrentView("pos")}
-                  className="bg-white text-black px-5 py-3 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-white/10 hover:bg-indigo-50 transition active:scale-95 cursor-pointer"
+                  className="bg-white text-black px-5 py-3 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-white/10 hover:bg-indigo-50 transition cursor-pointer"
                 >
                   <ShoppingCart size={16} /> {t.posBannerBtn}
-                </button>
+                </motion.button>
               </div>
             </div>
 
@@ -657,45 +928,53 @@ export default function App() {
             <div className="space-y-3">
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1">{t.quickOps}</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => setCurrentView("pos")}
-                  className={`${theme.bgInner} rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm border ${theme.border} ${theme.borderHover} active:scale-95 transition cursor-pointer`}
+                  className={`${theme.bgInner} rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm border ${theme.border} ${theme.borderHover} transition cursor-pointer`}
                 >
                   <div className={`${theme.textAccent} ${theme.bgAccent} w-12 h-12 rounded-xl flex items-center justify-center border ${theme.borderAccent}`}>
                     <ShoppingCart size={22} />
                   </div>
                   <span className={`text-[10px] font-black ${theme.isLight ? "text-slate-700" : "text-slate-300"} text-center`}>{t.newSale}</span>
-                </button>
+                </motion.button>
 
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => setActiveModal("sales-list")}
-                  className={`${theme.bgInner} rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm border ${theme.border} ${theme.borderHover} active:scale-95 transition cursor-pointer`}
+                  className={`${theme.bgInner} rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm border ${theme.border} ${theme.borderHover} transition cursor-pointer`}
                 >
                   <div className={`${theme.isLight ? "bg-slate-100 border-slate-200 text-slate-700" : "bg-white/5 border-white/10 text-slate-300"} w-12 h-12 rounded-xl flex items-center justify-center border`}>
                     <ListChecks size={22} />
                   </div>
                   <span className={`text-[10px] font-black ${theme.isLight ? "text-slate-700" : "text-slate-300"} text-center`}>{t.salesRecords}</span>
-                </button>
+                </motion.button>
 
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => setActiveModal("purchase-list")}
-                  className={`${theme.bgInner} rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm border ${theme.border} ${theme.borderHover} active:scale-95 transition cursor-pointer`}
+                  className={`${theme.bgInner} rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm border ${theme.border} ${theme.borderHover} transition cursor-pointer`}
                 >
                   <div className="bg-purple-500/10 text-purple-400 w-12 h-12 rounded-xl flex items-center justify-center border border-purple-500/20">
                     <Package size={22} />
                   </div>
                   <span className={`text-[10px] font-black ${theme.isLight ? "text-slate-700" : "text-slate-300"} text-center`}>{t.purchasedItems}</span>
-                </button>
+                </motion.button>
 
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => setActiveModal("cod")}
-                  className={`${theme.bgInner} rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm border ${theme.border} ${theme.borderHover} active:scale-95 transition cursor-pointer`}
+                  className={`${theme.bgInner} rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm border ${theme.border} ${theme.borderHover} transition cursor-pointer`}
                 >
                   <div className="bg-amber-500/10 text-amber-400 w-12 h-12 rounded-xl flex items-center justify-center border border-amber-500/20">
                     <Truck size={22} />
                   </div>
                   <span className={`text-[10px] font-black ${theme.isLight ? "text-slate-700" : "text-slate-300"} text-center`}>{t.codTracking}</span>
-                </button>
+                </motion.button>
               </div>
             </div>
 
@@ -817,6 +1096,7 @@ export default function App() {
               setActiveModal("sales-list");
             }}
             onClose={() => setCurrentView("dashboard")}
+            onMobileCartToggle={(isOpen) => setIsMobileCartOpen(isOpen)}
           />
         )}
 
@@ -890,59 +1170,299 @@ export default function App() {
         {/* VIEW 4: REPORTS VIEW */}
         {currentView === "reports" && (
           <div className="w-full h-full flex flex-col overflow-hidden relative z-10">
-            <div className="p-4 shrink-0 space-y-4 max-w-7xl mx-auto w-full">
-              {/* Profit banner */}
-              <div className={`${theme.bgInner} border ${theme.border} rounded-[1.5rem] p-5 shadow-sm`}>
-                <p className="text-[10px] font-black text-slate-500 uppercase mb-1">{t.netProfit}</p>
-                <h2 className={`text-3xl font-black ${theme.textAccent} flex items-baseline gap-1 font-display`}>
-                  {reportTotals.netProfit.toLocaleString()}{" "}
-                  <span className="text-xs font-bold text-slate-500">Ks</span>
+            {/* Report toolbar */}
+            <div className={`p-4 shrink-0 ${theme.isLight ? "bg-slate-100/50" : "bg-black/20"} backdrop-blur-md border-b ${theme.border} max-w-7xl mx-auto w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm`}>
+              <div>
+                <h2 className={`text-xl font-black ${theme.isLight ? "text-slate-800" : "text-white"} font-display flex items-center gap-2`}>
+                  <BarChart3 size={20} className="text-indigo-400" />
+                  {lang === "my" ? "အရောင်းအစီရင်ခံစာများ" : "Sales Reports & Analytics"}
                 </h2>
-                <div className={`grid grid-cols-2 gap-4 border-t ${theme.border} mt-4 pt-4`}>
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-500 uppercase">{t.totalRevenue}</p>
-                    <p className={`text-sm font-black ${theme.isLight ? "text-slate-800" : "text-slate-200"} mt-0.5`}>
-                      {reportTotals.totalRev.toLocaleString()} Ks
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-bold text-slate-500 uppercase">{t.totalCost}</p>
-                    <p className="text-sm font-black text-rose-400 mt-0.5">
-                      {(reportTotals.totalCost + reportTotals.totalExpenses + reportTotals.totalPayroll).toLocaleString()} Ks
-                    </p>
-                  </div>
-                </div>
+                <p className="text-[10px] font-semibold text-slate-500 mt-0.5">
+                  {lang === "my" ? "သင့်ဆိုင်၏ ရောင်းအားနှင့် ဘဏ္ဍာရေး အချက်အလက်များ" : "Analyze your business performance, products, and channels"}
+                </p>
+              </div>
+
+              {/* Time Period Filter Pills */}
+              <div className="flex gap-1 bg-[#0a0a0a]/95 border border-white/10 p-1 rounded-2xl self-start sm:self-center shrink-0">
+                {[
+                  { value: "all", labelEn: "All", labelMy: "အားလုံး" },
+                  { value: "today", labelEn: "Today", labelMy: "ယနေ့" },
+                  { value: "yesterday", labelEn: "Yesterday", labelMy: "မနေ့က" },
+                  { value: "week", labelEn: "7 Days", labelMy: "၇ ရက်" },
+                  { value: "month", labelEn: "30 Days", labelMy: "၃၀ ရက်" },
+                ].map((item) => (
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    key={item.value}
+                    onClick={() => setReportPeriod(item.value as any)}
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer ${
+                      reportPeriod === item.value
+                        ? "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    {lang === "my" ? item.labelMy : item.labelEn}
+                  </motion.button>
+                ))}
               </div>
             </div>
 
-            {/* Historic List */}
-            <div className="flex-1 overflow-y-auto px-4 pb-24 max-w-7xl mx-auto w-full no-scrollbar">
-              <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
-                {lang === "my" ? "မကြာမီက အရောင်းဘောက်ချာများ" : "Recent Sales Vouchers"}
-              </h3>
-              <div className="space-y-3">
-                {salesHistory.slice(0, 30).map((s) => {
-                  const itemsStr = (s.items || []).map((i: any) => i.name).join(", ");
-                  return (
-                    <div
-                      key={s.id}
-                      className={`${theme.bgInner} border ${theme.border} p-4 rounded-xl shadow-sm flex items-center justify-between ${theme.borderHover} transition-colors`}
-                    >
-                      <div className="overflow-hidden mr-2">
-                        <b className={`text-xs font-bold ${theme.isLight ? "text-slate-800" : "text-slate-200"} block truncate`}>{itemsStr}</b>
-                        <span className="text-[9px] text-slate-500 font-semibold">
-                          {s.createdAt?.toDate().toLocaleString()}
+            <div className="flex-1 overflow-y-auto p-4 pb-24 max-w-7xl mx-auto w-full no-scrollbar space-y-4">
+              {/* Analytics metrics bento grid */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* 1. Net Profit Card */}
+                <div className={`${theme.bgInner} border ${theme.border} rounded-3xl p-4 shadow-sm relative overflow-hidden group`}>
+                  <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition">
+                    <TrendingUp size={48} className="text-indigo-400" />
+                  </div>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1">{t.netProfit}</p>
+                  <h3 className={`text-xl sm:text-2xl font-black ${theme.textAccent} font-display truncate`}>
+                    {reportTotals.netProfit.toLocaleString()} <span className="text-[10px] font-bold text-slate-500">Ks</span>
+                  </h3>
+                  <div className="mt-2 flex items-center gap-1">
+                    <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
+                      Margin: {reportTotals.grossMargin.toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* 2. Total Revenue Card */}
+                <div className={`${theme.bgInner} border ${theme.border} rounded-3xl p-4 shadow-sm relative overflow-hidden group`}>
+                  <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition">
+                    <DollarSign size={48} className="text-indigo-400" />
+                  </div>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1">{t.totalRevenue}</p>
+                  <h3 className={`text-xl sm:text-2xl font-black ${theme.isLight ? "text-slate-800" : "text-slate-100"} font-display truncate`}>
+                    {reportTotals.totalRev.toLocaleString()} <span className="text-[10px] font-bold text-slate-500">Ks</span>
+                  </h3>
+                  <p className="text-[9px] text-slate-500 font-semibold mt-2.5">
+                    {lang === "my" ? "စုစုပေါင်း ရောင်းရငွေ" : "Gross store revenue"}
+                  </p>
+                </div>
+
+                {/* 3. Total Costs Card */}
+                <div className={`${theme.bgInner} border ${theme.border} rounded-3xl p-4 shadow-sm relative overflow-hidden group`}>
+                  <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition">
+                    <Package size={48} className="text-rose-400" />
+                  </div>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1">{t.totalCost}</p>
+                  <h3 className="text-xl sm:text-2xl font-black text-rose-400 font-display truncate">
+                    {(reportTotals.totalCost + reportTotals.totalExpenses + reportTotals.totalPayroll).toLocaleString()} <span className="text-[10px] font-bold text-slate-500">Ks</span>
+                  </h3>
+                  <p className="text-[9px] text-slate-500 font-semibold mt-2.5">
+                    {lang === "my" ? "ရင်းနှီးငွေ + စရိတ်များ" : "COGS & operational costs"}
+                  </p>
+                </div>
+
+                {/* 4. Total Sales & Ticket Card */}
+                <div className={`${theme.bgInner} border ${theme.border} rounded-3xl p-4 shadow-sm relative overflow-hidden group`}>
+                  <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition">
+                    <ListChecks size={48} className="text-purple-400" />
+                  </div>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1">{lang === "my" ? "စုစုပေါင်း ဘောက်ချာ" : "Total Transactions"}</p>
+                  <h3 className={`text-xl sm:text-2xl font-black ${theme.isLight ? "text-slate-800" : "text-slate-100"} font-display truncate`}>
+                    {reportTotals.salesCount} <span className="text-[10px] font-bold text-slate-500">{lang === "my" ? "ကြိမ်" : "Sales"}</span>
+                  </h3>
+                  <p className="text-[9px] text-indigo-400 font-bold mt-2.5">
+                    Avg: {Math.round(reportTotals.avgVoucher).toLocaleString()} Ks
+                  </p>
+                </div>
+              </div>
+
+              {/* Weekly performance visual chart */}
+              <div className={`${theme.bgInner} border ${theme.border} rounded-3xl p-5 shadow-sm space-y-4`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className={`text-xs font-black ${theme.isLight ? "text-slate-800" : "text-white"} uppercase tracking-wider`}>
+                      {lang === "my" ? "နောက်ဆုံး ၇ ရက် အရောင်းအခြေအနေ" : "Weekly Sales Trend (Last 7 Days)"}
+                    </h4>
+                    <p className="text-[9px] text-slate-500 font-semibold mt-0.5">
+                      {lang === "my" ? "နေ့စဉ်ရောင်းအား တိုးတက်မှုဇယား" : "Daily sales volume analysis"}
+                    </p>
+                  </div>
+                  <span className="text-[9px] font-bold text-indigo-400 flex items-center gap-1 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full">
+                    <Clock size={10} /> Real-time
+                  </span>
+                </div>
+
+                {/* SVG/CSS Custom Bar Chart */}
+                <div className="h-44 flex items-end gap-3 pt-6 px-2">
+                  {last7DaysSales.map((day, idx) => {
+                    const maxAmount = Math.max(...last7DaysSales.map((d) => d.amount), 1);
+                    const percentageHeight = (day.amount / maxAmount) * 100;
+                    return (
+                      <div key={idx} className="flex-1 flex flex-col items-center group cursor-pointer h-full justify-end">
+                        <div className="w-full relative flex justify-center items-end h-full">
+                          {/* Tooltip on hover */}
+                          <div className="absolute -top-7 opacity-0 group-hover:opacity-100 transition-all duration-200 bg-[#0a0a0a]/95 text-white border border-white/10 text-[9px] px-2 py-1 rounded-md font-bold whitespace-nowrap shadow-md z-20">
+                            {day.amount.toLocaleString()} Ks
+                          </div>
+                          {/* Bar Graphic */}
+                          <motion.div
+                            initial={{ height: 0 }}
+                            animate={{ height: `${Math.max(percentageHeight, 4)}%` }}
+                            transition={{ duration: 0.5, delay: idx * 0.05 }}
+                            className={`w-full rounded-t-xl transition-all duration-300 ${
+                              day.amount === maxAmount
+                                ? "bg-gradient-to-t from-indigo-600 via-purple-500 to-pink-500"
+                                : "bg-gradient-to-t from-indigo-500/60 to-indigo-500"
+                            } group-hover:brightness-110 shadow`}
+                          />
+                        </div>
+                        <span className="text-[9px] font-black text-slate-500 mt-2 font-mono">
+                          {day.dateLabel}
                         </span>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className={`font-black text-sm ${theme.textAccent} font-display`}>{(s.total || 0).toLocaleString()} Ks</p>
-                        <span className={`text-[9px] font-semibold ${theme.isLight ? "text-slate-600 bg-slate-100 border-slate-200" : "text-slate-400 bg-white/5 border-white/5"} px-2 py-0.5 rounded-md uppercase tracking-wider block mt-0.5`}>
-                          {s.paymentMethod}
-                        </span>
-                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Bento insights columns: Top Selling Products and Payment Methods */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Top Selling Products */}
+                <div className={`${theme.bgInner} border ${theme.border} rounded-3xl p-5 shadow-sm space-y-4`}>
+                  <div className="flex items-center gap-2">
+                    <Award className="text-amber-400" size={18} />
+                    <div>
+                      <h4 className={`text-xs font-black ${theme.isLight ? "text-slate-800" : "text-white"} uppercase tracking-wider`}>
+                        {lang === "my" ? "လူကြိုက်အများဆုံး ကုန်ပစ္စည်းများ" : "Top Selling Products"}
+                      </h4>
+                      <p className="text-[9px] text-slate-500 font-semibold">
+                        {lang === "my" ? "အများဆုံး ရောင်းအားရသော ကုန်ပစ္စည်း ၅ ခု" : "Best sellers in selected time period"}
+                      </p>
                     </div>
-                  );
-                })}
+                  </div>
+
+                  <div className="space-y-3 pt-1">
+                    {topSellingProducts.length === 0 ? (
+                      <p className="text-[11px] text-slate-500 font-bold py-6 text-center">
+                        {lang === "my" ? "အရောင်းမှတ်တမ်း မရှိသေးပါ။" : "No product sales recorded in this period."}
+                      </p>
+                    ) : (
+                      topSellingProducts.map((p, idx) => {
+                        const maxQty = Math.max(...topSellingProducts.map((p) => p.qty), 1);
+                        const progressPercent = (p.qty / maxQty) * 100;
+                        return (
+                          <div key={idx} className="space-y-1">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className={`font-black ${theme.isLight ? "text-slate-800" : "text-slate-200"} flex items-center gap-1.5`}>
+                                <span className="text-[9px] font-black text-slate-400 bg-white/5 border border-white/10 w-4 h-4 rounded flex items-center justify-center font-mono">{idx + 1}</span>
+                                {p.name}
+                              </span>
+                              <span className="text-indigo-400 font-bold text-[11px]">
+                                {p.qty} {lang === "my" ? "ခု" : "sold"} • {p.revenue.toLocaleString()} Ks
+                              </span>
+                            </div>
+                            <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${progressPercent}%` }}
+                                transition={{ duration: 0.6, delay: idx * 0.1 }}
+                                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Payment Channel Distribution */}
+                <div className={`${theme.bgInner} border ${theme.border} rounded-3xl p-5 shadow-sm space-y-4`}>
+                  <div className="flex items-center gap-2">
+                    <Landmark className="text-indigo-400" size={18} />
+                    <div>
+                      <h4 className={`text-xs font-black ${theme.isLight ? "text-slate-800" : "text-white"} uppercase tracking-wider`}>
+                        {lang === "my" ? "ငွေပေးချေမှုစနစ် အချိုးအစား" : "Payment Method Distribution"}
+                      </h4>
+                      <p className="text-[9px] text-slate-500 font-semibold">
+                        {lang === "my" ? "အသုံးပြုမှုအများဆုံး ငွေပေးချေမှုလမ်းကြောင်းများ" : "Sales channels split by value"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-1">
+                    {paymentMethodsBreakdown.every((m) => m.amount === 0) ? (
+                      <p className="text-[11px] text-slate-500 font-bold py-6 text-center">
+                        {lang === "my" ? "အရောင်းမှတ်တမ်း မရှိသေးပါ။" : "No payments recorded in this period."}
+                      </p>
+                    ) : (
+                      paymentMethodsBreakdown.map((pm, idx) => (
+                        <div key={idx} className="space-y-1">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className={`font-black ${theme.isLight ? "text-slate-800" : "text-slate-200"}`}>
+                              {pm.method}
+                            </span>
+                            <span className="text-slate-400 font-bold text-[11px]">
+                              {pm.percentage.toFixed(1)}% • {pm.amount.toLocaleString()} Ks
+                            </span>
+                          </div>
+                          <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                            <motion.div
+                              initial={{ width: 0 }}
+                              animate={{ width: `${pm.percentage}%` }}
+                              transition={{ duration: 0.6, delay: idx * 0.1 }}
+                              className="h-full rounded-full bg-gradient-to-r from-purple-500 to-pink-500"
+                            />
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Detailed Recent Sales history table list for filtered period */}
+              <div className={`${theme.bgInner} border ${theme.border} rounded-3xl p-5 shadow-sm space-y-4`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className={`text-xs font-black ${theme.isLight ? "text-slate-800" : "text-white"} uppercase tracking-wider`}>
+                      {lang === "my" ? "အသေးစိတ် အရောင်းမှတ်တမ်းများ" : "Filtered Sales Ledger"}
+                    </h4>
+                    <p className="text-[9px] text-slate-500 font-semibold">
+                      {lang === "my" ? "ရွေးချယ်ထားသော အချိန်အပိုင်းအခြားအတွင်းမှ ဘောက်ချာများ" : `Showing ${filteredSalesForReport.length} vouchers for ${reportPeriod.toUpperCase()}`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 max-h-96 overflow-y-auto no-scrollbar pt-1">
+                  {filteredSalesForReport.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 font-bold text-xs">
+                      {lang === "my" ? "ရွေးချယ်ထားသော အချိန်အပိုင်းအခြားအတွက် အရောင်းမှတ်တမ်း မရှိပါ။" : "No sales found for the selected time range."}
+                    </div>
+                  ) : (
+                    filteredSalesForReport.map((s) => {
+                      const itemsStr = (s.items || []).map((i: any) => i.name).join(", ");
+                      const dateStr = s.createdAt?.toDate ? s.createdAt.toDate().toLocaleString() : new Date(s.createdAt).toLocaleString();
+                      return (
+                        <div
+                          key={s.id}
+                          className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-sm flex items-center justify-between hover:border-indigo-500/20 transition duration-200"
+                        >
+                          <div className="overflow-hidden mr-3">
+                            <b className={`text-xs font-bold ${theme.isLight ? "text-slate-800" : "text-slate-200"} block truncate`}>
+                              {itemsStr || (lang === "my" ? "ကိုယ်တိုင်ထည့်သွင်းမှု" : "Manual / Direct Entry")}
+                            </b>
+                            <span className="text-[9px] text-slate-500 font-semibold block mt-0.5">
+                              {dateStr}
+                            </span>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className={`font-black text-sm ${theme.textAccent} font-display`}>
+                              {(s.total || 0).toLocaleString()} Ks
+                            </p>
+                            <span className={`text-[9px] font-bold ${theme.isLight ? "text-slate-600 bg-slate-100 border-slate-200" : "text-slate-400 bg-white/5 border-white/5"} px-2 py-0.5 rounded-md uppercase tracking-wider block mt-1`}>
+                              {s.paymentMethod}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -955,7 +1475,7 @@ export default function App() {
       </main>
 
       {/* Persistent Bottom navigation for mobile screen layout */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a]/90 backdrop-blur-md border-t border-white/5 flex justify-around items-center px-2 py-2 pb-safe shadow-lg lg:hidden z-40">
+      <nav className={`fixed bottom-0 left-0 right-0 bg-[#0a0a0a]/90 backdrop-blur-md border-t border-white/5 justify-around items-center px-2 py-2 pb-safe shadow-lg lg:hidden z-40 ${isMobileCartOpen ? "hidden" : "flex"}`}>
         <button
           onClick={() => setCurrentView("dashboard")}
           className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl transition-all cursor-pointer ${
