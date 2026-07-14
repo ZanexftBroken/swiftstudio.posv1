@@ -1401,7 +1401,7 @@ export default function PosView({
         </div>
 
         {/* Pricing Actions (Sticky Footer) */}
-        <div className="p-4 bg-[#0a0a0a] border-t border-white/10 shadow-2xl shrink-0">
+        <div className="p-4 pb-safe sm:pb-4 bg-[#0a0a0a] border-t border-white/10 shadow-2xl shrink-0">
             {!isSplitPayment && (
               <div className="mb-3">
                 <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-2">{lang === "my" ? "ငွေပေးချေမှုနည်းလမ်း" : "Payment Method"}</p>
