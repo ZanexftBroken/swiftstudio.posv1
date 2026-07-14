@@ -49,6 +49,13 @@ export default function Modals({
   const [pRetail, setPRetail] = useState(0);
   const [pWhole, setPWhole] = useState(0);
   const [pQty, setPQty] = useState(10);
+  const [hasVariants, setHasVariants] = useState(false);
+  const [productVariants, setProductVariants] = useState<{ id: string; name: string; sku: string; retailPrice: number; wholesalePrice: number; quantity: number }[]>([]);
+  const [vName, setVName] = useState("");
+  const [vSku, setVSku] = useState("");
+  const [vRetail, setVRetail] = useState(0);
+  const [vWhole, setVWhole] = useState(0);
+  const [vQty, setVQty] = useState(10);
 
   // --- Modal - Add Customer State ---
   const [cName, setCName] = useState("");
@@ -133,8 +140,16 @@ export default function Modals({
       alert(lang === "my" ? "အမည်နှင့် လက်လီစျေးနှုန်း ဖြည့်စွက်ပေးပါ။" : "Item name and retail price are required.");
       return;
     }
+    if (hasVariants && productVariants.length === 0) {
+      alert(lang === "my" ? "အနည်းဆုံး ဗားရှင်း (Variant) တစ်ခု ထည့်ပေးပါ။" : "Please add at least one variant.");
+      return;
+    }
     setLoading(true);
     try {
+      const computedQty = hasVariants 
+        ? productVariants.reduce((sum, v) => sum + v.quantity, 0) 
+        : (pQty || 0);
+
       await addDoc(collection(db, "shops", shopId, "products"), {
         name: pName,
         category: pCat || "General",
@@ -142,8 +157,10 @@ export default function Modals({
         costPrice: pCost || 0,
         retailPrice: pRetail,
         wholesalePrice: pWhole || pRetail,
-        quantity: pQty || 0,
+        quantity: computedQty,
         lowStockThreshold: 5,
+        hasVariants: hasVariants,
+        variants: hasVariants ? productVariants : null,
       });
       alert(lang === "my" ? "ကုန်ပစ္စည်းအသစ် ထည့်သွင်းပြီးပါပြီ။" : "Product added successfully!");
       onClose();
@@ -370,6 +387,24 @@ export default function Modals({
                   />
                 </div>
               </div>
+
+              {/* Product Variants Toggle */}
+              <div className="flex items-center justify-between bg-white/5 p-4 rounded-2xl border border-white/10 my-2">
+                <div>
+                  <h4 className="text-xs font-black text-white">{lang === "my" ? "အမျိုးအစားကွဲများ သတ်မှတ်မည် (Variants)" : "Enable Product Variants"}</h4>
+                  <p className="text-[10px] text-slate-400">{lang === "my" ? "အရွယ်အစား၊ အရောင် စသည်ဖြင့် ခွဲခြားသတ်မှတ်နိုင်သည်" : "Add different sizes, colors, or types"}</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hasVariants}
+                    onChange={(e) => setHasVariants(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div>
+                </label>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">{t.costPrice}</label>
@@ -390,6 +425,7 @@ export default function Modals({
                   />
                 </div>
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">{t.wholesalePrice}</label>
@@ -400,16 +436,135 @@ export default function Modals({
                     className="w-full p-4 bg-white/5 border border-white/10 text-white rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 outline-none transition"
                   />
                 </div>
-                <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">{t.stockQty}</label>
-                  <input
-                    type="number"
-                    value={pQty}
-                    onChange={(e) => setPQty(parseInt(e.target.value) || 0)}
-                    className="w-full p-4 bg-white/5 border border-white/10 text-white rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 outline-none transition"
-                  />
-                </div>
+                {!hasVariants && (
+                  <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">{t.stockQty}</label>
+                    <input
+                      type="number"
+                      value={pQty}
+                      onChange={(e) => setPQty(parseInt(e.target.value) || 0)}
+                      className="w-full p-4 bg-white/5 border border-white/10 text-white rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 outline-none transition"
+                    />
+                  </div>
+                )}
               </div>
+
+              {/* Dynamic Variants Form */}
+              {hasVariants && (
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/10 space-y-3">
+                  <h4 className="text-xs font-black text-indigo-400 uppercase tracking-wider">{lang === "my" ? "အမျိုးအစားကွဲ ထည့်သွင်းခြင်း" : "Add Variant"}</h4>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase mb-1 block">{lang === "my" ? "ဗားရှင်းအမည် (XL / Red)" : "Variant Name (e.g. Red, XL)"}</label>
+                      <input
+                        type="text"
+                        value={vName}
+                        onChange={(e) => setVName(e.target.value)}
+                        placeholder="M, XL, Red, Blue..."
+                        className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-xl text-xs font-semibold outline-none focus:border-indigo-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase mb-1 block">{lang === "my" ? "ဗားရှင်း SKU / Barcode" : "Variant SKU / Barcode"}</label>
+                      <input
+                        type="text"
+                        value={vSku}
+                        onChange={(e) => setVSku(e.target.value)}
+                        placeholder="Variant SKU/Barcode..."
+                        className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-xl text-xs font-semibold outline-none focus:border-indigo-500/50"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase mb-1 block">{lang === "my" ? "လက်လီစျေး (Retail)" : "Retail Price"}</label>
+                      <input
+                        type="number"
+                        value={vRetail}
+                        onChange={(e) => setVRetail(parseFloat(e.target.value) || 0)}
+                        placeholder={`${pRetail} Ks`}
+                        className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-xl text-xs font-semibold outline-none focus:border-indigo-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase mb-1 block">{lang === "my" ? "လက်ကားစျေး (Whole)" : "Wholesale Price"}</label>
+                      <input
+                        type="number"
+                        value={vWhole}
+                        onChange={(e) => setVWhole(parseFloat(e.target.value) || 0)}
+                        placeholder={`${pWhole || pRetail} Ks`}
+                        className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-xl text-xs font-semibold outline-none focus:border-indigo-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase mb-1 block">{lang === "my" ? "လက်ကျန်စတော့" : "Stock Quantity"}</label>
+                      <input
+                        type="number"
+                        value={vQty}
+                        onChange={(e) => setVQty(parseInt(e.target.value) || 0)}
+                        className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-xl text-xs font-semibold outline-none focus:border-indigo-500/50"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!vName.trim()) {
+                        alert(lang === "my" ? "ဗားရှင်းအမည် ထည့်သွင်းပေးပါ!" : "Please enter a variant name!");
+                        return;
+                      }
+                      const varObj = {
+                        id: "var_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+                        name: vName.trim(),
+                        sku: vSku.trim() || `${pSku || "sku"}-${vName.trim()}`,
+                        retailPrice: vRetail || pRetail,
+                        wholesalePrice: vWhole || pWhole || pRetail,
+                        quantity: vQty
+                      };
+                      setProductVariants(prev => [...prev, varObj]);
+                      setVName("");
+                      setVSku("");
+                      setVRetail(0);
+                      setVWhole(0);
+                      setVQty(10);
+                    }}
+                    className="w-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 py-2.5 rounded-xl text-xs font-black transition cursor-pointer"
+                  >
+                    + {lang === "my" ? "ဗားရှင်းအသစ်ထည့်မည်" : "Add Variant"}
+                  </button>
+
+                  {/* Render added variants list */}
+                  {productVariants.length > 0 && (
+                    <div className="pt-2 space-y-2 border-t border-white/5 mt-3">
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">{lang === "my" ? "ထည့်သွင်းပြီးသော ဗားရှင်းများ" : "Added Variants"}</p>
+                      <div className="space-y-1.5 max-h-[150px] overflow-y-auto pr-1 no-scrollbar">
+                        {productVariants.map((v, idx) => (
+                          <div key={v.id} className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5 text-xs text-slate-300">
+                            <div>
+                              <span className="font-bold text-white">{v.name}</span>
+                              <span className="text-[10px] text-slate-500 block">SKU: {v.sku} | Qty: {v.quantity}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-indigo-400 font-bold">{v.retailPrice.toLocaleString()} Ks</span>
+                              <button
+                                type="button"
+                                onClick={() => setProductVariants(prev => prev.filter((_, i) => i !== idx))}
+                                className="text-rose-400 hover:text-rose-500 bg-rose-500/10 p-1.5 rounded-lg border border-rose-500/10 cursor-pointer"
+                              >
+                                <Trash2 size={10} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <button
                 onClick={handleSaveProduct}
                 disabled={loading}

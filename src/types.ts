@@ -1,5 +1,14 @@
 import { Timestamp } from "firebase/firestore";
 
+export interface ProductVariant {
+  id: string;
+  name: string;
+  sku: string;
+  retailPrice: number;
+  wholesalePrice: number;
+  quantity: number;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -10,6 +19,9 @@ export interface Product {
   wholesalePrice: number;
   quantity: number;
   lowStockThreshold?: number;
+  hasVariants?: boolean;
+  variants?: ProductVariant[];
+  barcode?: string;
 }
 
 export interface CartItem {
@@ -20,6 +32,12 @@ export interface CartItem {
   price: number;
   costPrice: number;
   disc: number;
+  variantId?: string;
+}
+
+export interface SplitPayment {
+  method: string;
+  amount: number;
 }
 
 export interface Sale {
@@ -32,6 +50,8 @@ export interface Sale {
   total: number;
   profit: number;
   paymentMethod: string;
+  splitPayments?: SplitPayment[];
+  couponCode?: string;
   codStatus: string | null;
   collectedAt?: Timestamp;
   customerId: string | null;
