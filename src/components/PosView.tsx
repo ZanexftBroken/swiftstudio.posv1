@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { 
   ArrowLeft, Search, Plus, Trash2, User, ChevronDown, 
   ShoppingCart, Landmark, Wallet, CreditCard, Truck, RefreshCw, Layers,
-  Share2, Printer, CheckCircle2, Tag, X, AlertTriangle, Camera, QrCode
+  Share2, Printer, CheckCircle2, Tag, X, AlertTriangle, Camera
 } from "lucide-react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { motion } from "motion/react";
@@ -104,7 +104,6 @@ export default function PosView({
   const [manualQty, setManualQty] = useState(1);
   const [manualDisc, setManualDisc] = useState(0);
   const [manualPriceType, setManualPriceType] = useState<"retail" | "wholesale">("retail");
-  const [skuDropdownOpen, setSkuDropdownOpen] = useState(false);
 
   // Derive categories from products
   const categories = useMemo(() => {
@@ -152,7 +151,6 @@ export default function PosView({
     let subtotal = 0;
     let totalCost = 0;
     cart.forEach((item) => {
-      // The item price is stored when added (supports custom variants or manual edits)
       const activePrice = item.price;
       const itemSub = activePrice * item.qty - (activePrice * item.qty * item.disc) / 100;
       subtotal += itemSub;
@@ -183,7 +181,7 @@ export default function PosView({
       taxAmount,
       finalTotal,
     };
-  }, [cart, globalDiscount, globalTax, priceTypeGlobal, allProducts, appliedCoupon]);
+  }, [cart, globalDiscount, globalTax, appliedCoupon]);
 
   // Add standard product to cart, check for variants first
   const addToCart = (prod: Product) => {
@@ -284,7 +282,6 @@ export default function PosView({
     setManualPrice(0);
     setManualQty(1);
     setManualDisc(0);
-    setSkuDropdownOpen(false);
   };
 
   const removeFromCart = (index: number) => {
@@ -336,14 +333,13 @@ export default function PosView({
     alert(lang === "my" ? "ဘောက်ချာအချက်အလက်များကို Copy ကူးယူပြီးပါပြီ။ Viber သို့မဟုတ် Messenger တွင် Share နိုင်ပါပြီ။" : "Voucher copied to clipboard! Ready to share on Viber/Messenger.");
   };
 
-  // Barcode Scanner helper functions and Sound synthesizers
   const playScanSound = () => {
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
-      osc.frequency.setValueAtTime(880, ctx.currentTime); // High-pitched beep
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
       gain.gain.setValueAtTime(0.1, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
       osc.connect(gain);
@@ -411,7 +407,6 @@ export default function PosView({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      // Do not intercept keystrokes inside other text inputs unless it's the search input or body
       if (
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") &&
         !target.classList.contains("barcode-receiver")
@@ -451,7 +446,6 @@ export default function PosView({
     return Math.max(0, cartTotals.finalTotal - splitPaymentsSum);
   }, [cartTotals.finalTotal, splitPaymentsSum]);
 
-  // Checkout core operation
   const startCheckoutFlow = (printType: "A5" | "Slip") => {
     if (cart.length === 0) {
       alert(lang === "my" ? "စျေးဝယ်လှည်းထဲတွင် ကုန်ပစ္စည်း မရှိသေးပါ။" : "No items in cart.");
@@ -467,7 +461,7 @@ export default function PosView({
       return;
     }
 
-    // Strict Inventory / Stock Safety Check (Prevent Negative Quantities)
+    // Strict Inventory / Stock Safety Check
     for (const item of cart) {
       if (!item.id.startsWith("custom-")) {
         const parts = item.id.split("_");
@@ -479,28 +473,16 @@ export default function PosView({
           if (varId && matchedOriginal.variants) {
             const vObj = matchedOriginal.variants.find((v) => v.id === varId);
             if (!vObj) {
-              alert(
-                lang === "my"
-                  ? `ကုန်ပစ္စည်း "${item.name}" ၏ အမျိုးအစားကို ရှာမတွေ့ပါ။`
-                  : `Variant for product "${item.name}" not found.`
-              );
+              alert(lang === "my" ? `ကုန်ပစ္စည်း "${item.name}" ၏ အမျိုးအစားကို ရှာမတွေ့ပါ။` : `Variant for product "${item.name}" not found.`);
               return;
             }
             if (item.qty > vObj.quantity) {
-              alert(
-                lang === "my"
-                  ? `"${item.name}" အတွက် လက်ကျန်မလုံလောက်ပါ။ (လက်ကျန်: ${vObj.quantity} ခု)`
-                  : `Insufficient stock for "${item.name}"! (Available: ${vObj.quantity} pcs)`
-              );
+              alert(lang === "my" ? `"${item.name}" အတွက် လက်ကျန်မလုံလောက်ပါ။ (လက်ကျန်: ${vObj.quantity} ခု)` : `Insufficient stock for "${item.name}"! (Available: ${vObj.quantity} pcs)`);
               return;
             }
           } else {
             if (item.qty > matchedOriginal.quantity) {
-              alert(
-                lang === "my"
-                  ? `"${item.name}" အတွက် လက်ကျန်မလုံလောက်ပါ။ (လက်ကျန်: ${matchedOriginal.quantity} ခု)`
-                  : `Insufficient stock for "${item.name}"! (Available: ${matchedOriginal.quantity} pcs)`
-              );
+              alert(lang === "my" ? `"${item.name}" အတွက် လက်ကျန်မလုံလောက်ပါ။ (လက်ကျန်: ${matchedOriginal.quantity} ခု)` : `Insufficient stock for "${item.name}"! (Available: ${matchedOriginal.quantity} pcs)`);
               return;
             }
           }
@@ -508,7 +490,6 @@ export default function PosView({
       }
     }
 
-    // Pre-fill customer name
     let initialName = "";
     if (selectedCustomerId === "Walk-in") {
       initialName = "";
@@ -524,11 +505,8 @@ export default function PosView({
     setIsCheckoutModalOpen(true);
   };
 
-  // Checkout core operation
   const handleCheckout = async (printType: "A5" | "Slip", finalCustomerName: string) => {
-    if (cart.length === 0) {
-      return;
-    }
+    if (cart.length === 0) return;
 
     let customerName = finalCustomerName.trim();
     if (!customerName) {
@@ -537,17 +515,15 @@ export default function PosView({
 
     try {
       const batch = writeBatch(db);
-
-      // Sanitize items list to avoid undefined field values (e.g. variantId: undefined)
       const sanitizedItems = cart.map((item) => {
         const cleanedItem: any = {
-          id: item.id || "",
+          id: item.id,
           sku: item.sku || "-",
-          name: item.name || "",
-          qty: Number(item.qty) || 0,
-          price: Number(item.price) || 0,
-          costPrice: Number(item.costPrice) || 0,
-          disc: Number(item.disc) || 0,
+          name: item.name,
+          qty: item.qty,
+          price: item.price,
+          costPrice: item.costPrice || 0,
+          disc: item.disc || 0,
         };
         if (item.variantId !== undefined && item.variantId !== null) {
           cleanedItem.variantId = item.variantId;
@@ -555,36 +531,25 @@ export default function PosView({
         return cleanedItem;
       });
 
-      // Create Sale Record
       const salesRef = doc(collection(db, "shops", shopId, "sales"));
       const saleData = {
         items: sanitizedItems,
-        subTotal: Number(cartTotals.subtotal) || 0,
-        totalCost: Number(cartTotals.totalCost) || 0,
-        discount: Number(cartTotals.discountAmount) || 0,
-        tax: Number(globalTax) || 0,
-        total: Number(cartTotals.finalTotal) || 0,
-        profit: (Number(cartTotals.finalTotal) || 0) - (Number(cartTotals.totalCost) || 0),
-        paymentMethod: (isSplitPayment ? "Split" : paymentMethod) || "Cash",
-        splitPayments: isSplitPayment 
-          ? splitPayments
-              .filter((sp) => sp.amount > 0)
-              .map((sp) => ({
-                method: sp.method || "Cash",
-                amount: Number(sp.amount) || 0,
-              }))
-          : null,
-        couponCode: (appliedCoupon && appliedCoupon.code) ? appliedCoupon.code : null,
+        subTotal: cartTotals.subtotal,
+        totalCost: cartTotals.totalCost,
+        discount: cartTotals.discountAmount,
+        tax: globalTax,
+        total: cartTotals.finalTotal,
+        profit: cartTotals.finalTotal - cartTotals.totalCost,
+        paymentMethod: isSplitPayment ? "Split" : paymentMethod,
+        splitPayments: isSplitPayment ? splitPayments.filter((sp) => sp.amount > 0) : null,
+        couponCode: appliedCoupon ? appliedCoupon.code : null,
         codStatus: paymentMethod === "COD" ? "Pending" : null,
-        customerId: (selectedCustomerId && selectedCustomerId !== "Walk-in" && selectedCustomerId !== "custom") 
-          ? selectedCustomerId 
-          : null,
-        customerName: customerName || "Walk-in Customer",
+        customerId: (selectedCustomerId === "Walk-in" || selectedCustomerId === "custom") ? null : selectedCustomerId,
+        customerName,
         createdAt: serverTimestamp(),
       };
       batch.set(salesRef, saleData);
 
-      // Decrement Inventory (with Advanced Variant Support)
       cart.forEach((item) => {
         if (!item.id.startsWith("custom-")) {
           const parts = item.id.split("_");
@@ -615,7 +580,6 @@ export default function PosView({
         }
       });
 
-      // Update Customer accounts (Debt points)
       if (selectedCustomerId !== "Walk-in" && selectedCustomerId !== "custom") {
         const customerRef = doc(db, "shops", shopId, "customers", selectedCustomerId);
         const debtIncrease = isSplitPayment 
@@ -635,11 +599,8 @@ export default function PosView({
       }
 
       await batch.commit();
-
-      // Trigger standard receipt printing window
       printReceipt(cart, cartTotals.finalTotal, customerName, printType);
 
-      // Set success sale for sharing and display
       const completedSale = {
         id: salesRef.id,
         items: cart,
@@ -656,7 +617,6 @@ export default function PosView({
       setLastCompletedSale(completedSale);
       setShowSuccessModal(true);
       
-      // Reset cart and checkout states for next sale
       setCart([]);
       setGlobalDiscount(0);
       setGlobalTax(0);
@@ -678,7 +638,6 @@ export default function PosView({
     }
   };
 
-  // Print system helper
   const printReceipt = (
     items: CartItem[],
     total: number,
@@ -753,7 +712,6 @@ export default function PosView({
       </div>
     `;
 
-    // Open printing window or hidden iframe fallback
     const printFrame = document.createElement("iframe");
     printFrame.style.position = "fixed";
     printFrame.style.right = "0";
@@ -769,15 +727,9 @@ export default function PosView({
         <html>
           <head>
             <title>Print Receipt</title>
-            <style>
-              @media print {
-                body { margin: 0; background: white; }
-              }
-            </style>
+            <style>@media print { body { margin: 0; background: white; } }</style>
           </head>
-          <body onload="window.print();">
-            ${html}
-          </body>
+          <body onload="window.print();">${html}</body>
         </html>
       `);
       frameDoc.close();
@@ -835,10 +787,7 @@ export default function PosView({
           </div>
           {posTab === "grid" && (
             <div className="flex-1 max-w-[150px] sm:max-w-xs relative">
-              <Search
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-              />
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 type="text"
                 value={searchTerm}
@@ -860,7 +809,6 @@ export default function PosView({
         {/* Tab - Product Grid */}
         {posTab === "grid" && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Category selection */}
             <div className={`bg-black/10 border-b ${theme.border} shrink-0 py-3 px-4 overflow-x-auto no-scrollbar flex items-center gap-2`}>
               <motion.button
                 whileHover={{ scale: 1.06 }}
@@ -889,7 +837,6 @@ export default function PosView({
               ))}
             </div>
 
-            {/* Grid */}
             <div className="flex-1 overflow-y-auto p-4 pb-24 lg:p-4 no-scrollbar">
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredProducts.map((p) => {
@@ -937,9 +884,7 @@ export default function PosView({
                               : "text-slate-400 bg-white/5 border-white/10"
                           }`}
                         >
-                          {isOutOfStock 
-                            ? (lang === "my" ? "ရောင်းကုန်ပြီ" : "Out of Stock") 
-                            : `${p.quantity}${lang === "my" ? "ခုကျန်" : " left"}`}
+                          {isOutOfStock ? (lang === "my" ? "ရောင်းကုန်ပြီ" : "Out of Stock") : `${p.quantity}${lang === "my" ? "ခုကျန်" : " left"}`}
                         </div>
                       </div>
                     </motion.div>
@@ -1112,8 +1057,8 @@ export default function PosView({
           </div>
         </div>
 
-        {/* Scrollable Container for Sidebar Contents (Fixes Mobile Checkout Overlap) */}
-        <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4">
+        {/* Scrollable Container (Fix: isolated items layout) */}
+        <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 pb-12">
             {/* Customer & global wholesale toggle */}
             <div className="bg-white/5 p-3 rounded-2xl border border-white/10 shadow-sm relative">
               <div className="relative">
@@ -1124,7 +1069,6 @@ export default function PosView({
                     value={customerSearch}
                     onFocus={() => setIsCustomerDropdownOpen(true)}
                     onBlur={() => {
-                      // Small delay to allow clicking options before dropdown closes
                       setTimeout(() => setIsCustomerDropdownOpen(false), 200);
                     }}
                     onChange={(e) => {
@@ -1167,7 +1111,6 @@ export default function PosView({
                 {/* Dropdown panel */}
                 {isCustomerDropdownOpen && (
                   <div className="absolute left-0 right-0 mt-1 bg-[#121212] border border-white/10 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-white/5 no-scrollbar">
-                    {/* Walk-in Option */}
                     <div
                       onMouseDown={() => {
                         setSelectedCustomerId("Walk-in");
@@ -1181,7 +1124,6 @@ export default function PosView({
                       {selectedCustomerId === "Walk-in" && <span className="text-indigo-400 text-[10px]">✓</span>}
                     </div>
 
-                    {/* Filtered customers */}
                     {customers
                       .filter(c => 
                         c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
@@ -1205,7 +1147,6 @@ export default function PosView({
                         </div>
                       ))}
 
-                    {/* Quick creation of a new customer if it's custom and name is typed */}
                     {selectedCustomerId === "custom" && customerSearch.trim() !== "" && (
                       <div
                         onMouseDown={async (e) => {
@@ -1279,7 +1220,6 @@ export default function PosView({
                 </div>
               ) : (
                 cart.map((item, idx) => {
-                  const originalProduct = allProducts.find((p) => p.id === item.id.split("_")[0]);
                   const activePrice = item.price;
                   const sub = activePrice * item.qty - (activePrice * item.qty * item.disc) / 100;
                   return (
@@ -1386,7 +1326,6 @@ export default function PosView({
                     </div>
                   ))}
                   
-                  {/* Split Validation Feedback */}
                   <div className="flex justify-between items-center text-[10px] font-black pt-2 border-t border-white/5">
                     <span className="text-slate-400">Allocated: {splitPaymentsSum.toLocaleString()} / {cartTotals.finalTotal.toLocaleString()} Ks</span>
                     {remainingSplitBalance > 0 ? (
@@ -1400,8 +1339,8 @@ export default function PosView({
             </div>
         </div>
 
-        {/* Pricing Actions (Sticky Footer) */}
-        <div className="p-4 pb-safe sm:pb-4 bg-[#0a0a0a] border-t border-white/10 shadow-2xl shrink-0">
+        {/* Pricing Actions (Fix: Sticky Viewport Footer for Mobile Compatibility) */}
+        <div className="p-4 bg-[#0a0a0a] border-t border-white/10 shadow-2xl shrink-0 pb-6 sm:pb-4">
             {!isSplitPayment && (
               <div className="mb-3">
                 <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-2">{lang === "my" ? "ငွေပေးချေမှုနည်းလမ်း" : "Payment Method"}</p>
@@ -1508,7 +1447,7 @@ export default function PosView({
               )}
               <div className="flex justify-between items-end border-t border-white/5 pt-2">
                 <span className="text-xs font-black text-slate-300">{lang === "my" ? "ကျသင့်ငွေ" : "TOTAL"}</span>
-                <span className="text-xl font-black text-indigo-400 font-display font-display">
+                <span className="text-xl font-black text-indigo-400 font-display">
                   {cartTotals.finalTotal.toLocaleString()} Ks
                 </span>
               </div>
@@ -1543,23 +1482,16 @@ export default function PosView({
         />
       )}
 
-      {/* ========================================================================= */}
-      {/* ADVANCED MODALS & NOTIFICATIONS OVERLAYS */}
-      {/* ========================================================================= */}
-
-      {/* Barcode Scanner Indicator Alert Toast */}
+      {/* Advanced Overlay Modals */}
       {scanMessage && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2 border transition-all duration-300 ${
-          scanIsError 
-            ? "bg-rose-500 border-rose-500 text-white" 
-            : "bg-emerald-500 border-emerald-500 text-white"
+          scanIsError ? "bg-rose-500 border-rose-500 text-white" : "bg-emerald-500 border-emerald-500 text-white"
         }`}>
           <Tag size={16} />
           <span className="text-xs font-black">{scanMessage}</span>
         </div>
       )}
 
-      {/* Checkout Confirmation & Custom Customer Name Modal */}
       {isCheckoutModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-55 flex items-center justify-center p-4">
           <motion.div
@@ -1602,7 +1534,6 @@ export default function PosView({
               </div>
             </div>
 
-            {/* Customer Name Input Field */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider block">
                 {lang === "my" ? "ဝယ်သူအမည်" : "Customer Name"}
@@ -1618,14 +1549,8 @@ export default function PosView({
                   autoFocus
                 />
               </div>
-              <p className="text-[10px] text-slate-500">
-                {lang === "my" 
-                  ? "ဝယ်သူအမည်ကို ဤနေရာတွင် တိုက်ရိုက်ရိုက်ထည့်နိုင်ပါသည်" 
-                  : "You can enter or edit the customer's name directly for this voucher."}
-              </p>
             </div>
 
-            {/* Action buttons */}
             <div className="grid grid-cols-2 gap-2 pt-2">
               <button
                 onClick={() => setIsCheckoutModalOpen(false)}
@@ -1647,7 +1572,6 @@ export default function PosView({
         </div>
       )}
 
-      {/* Product Variant Selection Modal */}
       {selectedProductForVariant && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-[#0c0c0c] border border-white/10 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
@@ -1697,7 +1621,6 @@ export default function PosView({
         </div>
       )}
 
-      {/* Checkout Success Screen & Receipt Sharing Modal */}
       {showSuccessModal && lastCompletedSale && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-[#0d0d0d] border border-white/10 w-full max-w-md rounded-3xl p-6 shadow-2xl relative text-center">
@@ -1710,7 +1633,6 @@ export default function PosView({
             </h3>
             <p className="text-xs text-slate-400 mb-6">Voucher: #{lastCompletedSale.id.substring(0, 8)}</p>
 
-            {/* Receipt Summary Box */}
             <div className="bg-white/5 rounded-2xl border border-white/5 p-4 text-left space-y-3 mb-6">
               <div className="flex justify-between text-xs text-slate-400">
                 <span>Customer:</span>
@@ -1730,7 +1652,6 @@ export default function PosView({
               </div>
             </div>
 
-            {/* Print and Share buttons */}
             <div className="space-y-2">
               <button
                 onClick={() => {
@@ -1761,7 +1682,6 @@ export default function PosView({
         </div>
       )}
 
-      {/* Camera Barcode Scanner Modal overlay */}
       <CameraScannerModal
         isOpen={showCameraScanner}
         onClose={() => setShowCameraScanner(false)}
@@ -1773,9 +1693,7 @@ export default function PosView({
   );
 }
 
-// =========================================================================
-// CAMERA BARCODE / QR SCANNER MODAL WITH DEVELOPER SIMULATOR
-// =========================================================================
+// CAMERA BARCODE / QR SCANNER MODAL COMPONENTS
 function CameraScannerModal({
   isOpen,
   onClose,
@@ -1792,7 +1710,6 @@ function CameraScannerModal({
   const [error, setError] = useState<string | null>(null);
   const [manualBarcode, setManualBarcode] = useState("");
 
-  // Get list of existing SKUs to let user select / click for simulation
   const availableSkus = useMemo(() => {
     const skus: { sku: string; name: string }[] = [];
     allProducts.forEach((p) => {
@@ -1813,7 +1730,6 @@ function CameraScannerModal({
     let isMounted = true;
     setError(null);
 
-    // Give DOM a split-second to mount the container element
     const timer = setTimeout(() => {
       if (!isMounted) return;
       try {
@@ -1839,7 +1755,6 @@ function CameraScannerModal({
           {
             fps: 24,
             qrbox: (width, height) => {
-              // Rectangle box styled specifically for scan line targeting of 1D barcodes
               return {
                 width: Math.min(width * 0.9, 320),
                 height: Math.min(height * 0.45, 140),
@@ -1853,9 +1768,7 @@ function CameraScannerModal({
             onScan(decodedText);
             onClose();
           },
-          () => {
-            // Quiet mode during frame analysis failures
-          }
+          () => {}
         ).catch((err) => {
           console.warn("Scanner initiation error:", err);
           setError(err?.message || String(err));
@@ -1895,10 +1808,8 @@ function CameraScannerModal({
           {lang === "my" ? "ကုန်ပစ္စည်း Barcode ကို ကင်မရာရှေ့တွင်ပြပါ" : "Align barcode or QR code inside the guide box"}
         </p>
 
-        {/* Camera Viewport */}
         <div className="relative aspect-video w-full bg-black rounded-2xl overflow-hidden border border-white/5 mb-4 flex flex-col items-center justify-center">
           <div id="reader" className="w-full h-full" />
-          
           {error && (
             <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-4 text-center z-10">
               <AlertTriangle className="text-amber-500 mb-2" size={24} />
@@ -1910,7 +1821,6 @@ function CameraScannerModal({
           )}
         </div>
 
-        {/* Barcode Simulator / Manual Typing Option */}
         <div className="border-t border-white/5 pt-4 space-y-3 flex-1 overflow-y-auto no-scrollbar">
           <div>
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-2">
