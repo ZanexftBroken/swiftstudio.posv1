@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Brain, Send, Sparkles, AlertCircle } from "lucide-react";
 import { Product, ChatMessage } from "../types";
+import { Language } from "../lib/translations";
 
 interface AiAnalystProps {
   allProducts: Product[];
   shopId: string;
+  lang?: Language; // add lang prop
 }
 
-export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
+export default function AiAnalyst({ allProducts, shopId, lang = "en" }: AiAnalystProps) {
+  const initialMessage = lang === "my" 
+    ? "မင်္ဂလာပါဗျာ၊ ကျွန်တော်က Swift POS ရဲ့ AI Analyst ဖြစ်ပါတယ်။ ဆိုင်ရဲ့ ဝင်ငွေ၊ ထွက်ငွေ၊ စတော့ အခြေအနေတွေနဲ့ ပတ်သက်ပြီး ဘာများ ကူညီပေးရမလဲခင်ဗျာ။"
+    : "Hello! I am Swift POS's AI Analyst. How can I help you with your store's inventory, sales, and profits today?";
+
   const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      sender: "ai",
-      text: "မင်္ဂလာပါဗျာ၊ ကျွန်တော်က Swift POS ရဲ့ AI Analyst ဖြစ်ပါတယ်။ ဆိုင်ရဲ့ ဝင်ငွေ၊ ထွက်ငွေ၊ စတော့ အခြေအနေတွေနဲ့ ပတ်သက်ပြီး ဘာများ ကူညီပေးရမလဲခင်ဗျာ။",
-    },
+    { sender: "ai", text: initialMessage },
   ]);
   const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,10 +28,12 @@ export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Generate initial insights based on products
+  // Generate initial insights based on products and language
   const generateStaticInsights = async () => {
     if (allProducts.length === 0) {
-      setStaticInsight("Data လုံလောက်မှု မရှိသေးပါ။ အရောင်းစာရင်းများ သို့မဟုတ် ကုန်ပစ္စည်းစာရင်းများ ပိုမိုသွင်းပေးရန် လိုအပ်သည်။");
+      setStaticInsight(lang === "my" 
+        ? "Data လုံလောက်မှု မရှိသေးပါ။ အရောင်းစာရင်းများ သို့မဟုတ် ကုန်ပစ္စည်းစာရင်းများ ပိုမိုသွင်းပေးရန် လိုအပ်သည်။"
+        : "Insufficient data. Please add more sales records or products to get meaningful insights.");
       return;
     }
 
@@ -49,23 +54,29 @@ export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
         potentialSalesValue: allProducts.reduce((sum, p) => sum + p.quantity * p.retailPrice, 0),
       };
 
+      const prompt = lang === "my"
+        ? "ဆိုင်ရဲ့ လက်ရှိစတော့အခြေအနေ (Low stock, potential values) ကိုကြည့်ပြီး ဆိုင်ရှင်အတွက် အရေးကြီးဆုံး စီးပွားရေးအကြံပြုချက် ၃ ချက်ကို အကျဉ်းချုပ်ပြီး မြန်မာလို ရေးပေးပါ။"
+        : "Based on the current stock status (Low stock, potential values), give me 3 most important business recommendations in English.";
+
       const res = await fetch("/api/ai-analyst", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: "ဆိုင်ရဲ့ လက်ရှိစတော့အခြေအနေ (Low stock, potential values) ကိုကြည့်ပြီး ဆိုင်ရှင်အတွက် အရေးကြီးဆုံး စီးပွားရေးအကြံပြုချက် ၃ ချက်ကို အကျဉ်းချုပ်ပြီး မြန်မာလို ရေးပေးပါ။",
+          prompt: prompt,
           context: contextData,
         }),
       });
 
       const data = await res.json();
       if (data.error) {
-        setStaticInsight(`အချက်အလက် မရယူနိုင်ပါ- ${data.error}`);
+        setStaticInsight(`Error: ${data.error}`);
       } else {
-        setStaticInsight(data.text || "အကြံပြုချက် မထွက်ပေါ်လာပါ။");
+        setStaticInsight(data.text || "No insight generated.");
       }
     } catch (e: any) {
-      setStaticInsight("အချက်အလက်များ သုံးသပ်ရန် အမှားအယွင်းရှိနေပါသည်။");
+      setStaticInsight(lang === "my" 
+        ? "အချက်အလက်များ သုံးသပ်ရန် အမှားအယွင်းရှိနေပါသည်။" 
+        : "An error occurred while analyzing data.");
     } finally {
       setInsightLoading(false);
     }
@@ -75,13 +86,12 @@ export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
     if (allProducts.length > 0) {
       generateStaticInsights();
     }
-  }, [allProducts.length]);
+  }, [allProducts.length, lang]); // Re-run when language changes
 
   const handleSend = async () => {
     const text = inputValue.trim();
     if (!text || loading) return;
 
-    // Add user message
     setMessages((prev) => [...prev, { sender: "user", text }]);
     setInputValue("");
     setLoading(true);
@@ -117,13 +127,15 @@ export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
       } else {
         setMessages((prev) => [
           ...prev,
-          { sender: "ai", text: data.text || "နားမလည်နိုင်သော အဖြေတစ်ခု ဖြစ်ပေါ်လာသည်။" },
+          { sender: "ai", text: data.text || "No response." },
         ]);
       }
     } catch (e: any) {
       setMessages((prev) => [
         ...prev,
-        { sender: "ai", text: "တောင်းပန်ပါတယ်ခင်ဗျာ၊ ဆာဗာနှင့် ချိတ်ဆက်မှု အဆင်မပြေဖြစ်သွားလို့ပါ။ ခဏနေမှ ထပ်ကြိုးစားကြည့်ပေးပါ။" },
+        { sender: "ai", text: lang === "my" 
+          ? "တောင်းပန်ပါတယ်ခင်ဗျာ၊ ဆာဗာနှင့် ချိတ်ဆက်မှု အဆင်မပြေဖြစ်သွားလို့ပါ။" 
+          : "Sorry, there was a connection error with the server." },
       ]);
     } finally {
       setLoading(false);
@@ -147,7 +159,9 @@ export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
             AI Business Analyst
           </h2>
           <p className="text-violet-100 text-sm font-medium">
-            ဆိုင်ရဲ့ စတော့တွေနဲ့ ကုန်ပစ္စည်းဒေတာတွေကို အခြေခံပြီး စီးပွားရေးအကြံပြုချက်များ တောင်းဆိုပါ။
+            {lang === "my" 
+              ? "ဆိုင်ရဲ့ စတော့တွေနဲ့ ကုန်ပစ္စည်းဒေတာတွေကို အခြေခံပြီး စီးပွားရေးအကြံပြုချက်များ တောင်းဆိုပါ။"
+              : "Ask for business recommendations based on your store's stock and product data."}
           </p>
         </div>
       </div>
@@ -156,21 +170,24 @@ export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
       <div className="bg-[#0a0a0a]/80 backdrop-blur-md p-5 rounded-[1.5rem] border border-white/5 shadow-sm space-y-3 shrink-0">
         <div className="flex justify-between items-center">
           <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 font-display">
-            <Sparkles className="text-indigo-400" size={14} /> Smart Insights
+            <Sparkles className="text-indigo-400" size={14} /> 
+            {lang === "my" ? "Smart Insights" : "Smart Insights"}
           </h3>
           <button
             onClick={generateStaticInsights}
             disabled={insightLoading}
             className="text-xs font-bold text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition cursor-pointer"
           >
-            {insightLoading ? "အသစ်ပြန်လုပ်နေသည်..." : "ပြန်လည်သုံးသပ်မည်"}
+            {insightLoading 
+              ? (lang === "my" ? "ပြန်လည်သုံးသပ်နေသည်..." : "Refreshing...") 
+              : (lang === "my" ? "ပြန်လည်သုံးသပ်မည်" : "Refresh")}
           </button>
         </div>
         <div className="text-sm font-medium text-slate-200 leading-relaxed bg-white/5 p-4 rounded-xl border border-white/10 min-h-[60px] whitespace-pre-wrap">
           {insightLoading ? (
             <div className="flex items-center gap-2 text-slate-400 animate-pulse">
               <Sparkles size={16} className="animate-spin text-indigo-400" />
-              စတော့ဒေတာများကို AI ဖြင့် ခွဲခြမ်းစိတ်ဖြာနေသည်...
+              {lang === "my" ? "စတော့ဒေတာများကို ခွဲခြမ်းစိတ်ဖြာနေသည်..." : "Analyzing stock data..."}
             </div>
           ) : (
             staticInsight
@@ -196,7 +213,7 @@ export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
           {loading && (
             <div className="bg-white/5 text-slate-400 p-3.5 rounded-2xl max-w-[80%] w-fit italic border border-white/5 flex items-center gap-2">
               <Sparkles className="animate-spin text-indigo-400" size={16} />
-              AI စဉ်းစားနေသည်...
+              {lang === "my" ? "AI စဉ်းစားနေသည်..." : "AI is thinking..."}
             </div>
           )}
           <div ref={chatEndRef} />
@@ -209,7 +226,7 @@ export default function AiAnalyst({ allProducts, shopId }: AiAnalystProps) {
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder="AI ဆီ အရောင်းနှင့်စတော့အကြောင်း မေးမြန်းပါ..."
+            placeholder={lang === "my" ? "AI ဆီ အရောင်းနှင့်စတော့အကြောင်း မေးမြန်းပါ..." : "Ask AI about sales and stock..."}
             className="flex-1 p-3.5 bg-white/5 border border-white/10 rounded-xl text-sm font-semibold text-white outline-none focus:border-indigo-500/50 focus:bg-white/10 transition placeholder:text-slate-600"
           />
           <button

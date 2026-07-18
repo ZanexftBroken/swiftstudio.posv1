@@ -8,7 +8,7 @@ import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { motion } from "motion/react";
 import { db } from "../firebase";
 import { collection, doc, writeBatch, serverTimestamp, increment, addDoc } from "firebase/firestore";
-import { Product, CartItem, Customer, ShopSettings } from "../types";
+import { Product, CartItem, Customer, ShopSettings, Warehouse } from "../types";
 import { getTheme } from "../lib/theme";
 import { translations, Language } from "../lib/translations";
 
@@ -18,6 +18,7 @@ interface PosViewProps {
   shopName: string;
   shopSettings: ShopSettings;
   customers: Customer[];
+  warehouses?: Warehouse[];
   heldOrdersCount: number;
   lang?: Language;
   onCheckoutSuccess: () => void;
@@ -33,6 +34,7 @@ export default function PosView({
   shopName,
   shopSettings,
   customers,
+  warehouses = [],
   heldOrdersCount,
   lang = "en",
   onCheckoutSuccess,
@@ -42,7 +44,6 @@ export default function PosView({
   onMobileCartToggle,
 }: PosViewProps) {
   const t = translations[lang];
-  // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
   const theme = useMemo(() => getTheme(shopSettings.theme), [shopSettings.theme]);
   const [selectedCustomerId, setSelectedCustomerId] = useState("Walk-in");
@@ -60,7 +61,6 @@ export default function PosView({
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [priceTypeGlobal, setPriceTypeGlobal] = useState<"retail" | "wholesale">("retail");
   
-  // Advanced features state
   const [selectedProductForVariant, setSelectedProductForVariant] = useState<Product | null>(null);
   const [isSplitPayment, setIsSplitPayment] = useState(false);
   const [splitPayments, setSplitPayments] = useState<{ method: string; amount: number }[]>([
@@ -72,19 +72,17 @@ export default function PosView({
   const [couponCode, setCouponCode] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; type: "percent" | "fixed"; value: number } | null>(null);
   
-  // Checkout Success Screen & Receipt state
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastCompletedSale, setLastCompletedSale] = useState<any | null>(null);
 
-  // Scan alerts state
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanIsError, setScanIsError] = useState(false);
 
-  // UI Tabs / Filters
   const [posTab, setPosTab] = useState<"grid" | "thrift">("grid");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  const [selectedWarehouse, setSelectedWarehouse] = useState("");
   useEffect(() => {
     if (onMobileCartToggle) {
       onMobileCartToggle(mobileCartOpen);
@@ -92,12 +90,10 @@ export default function PosView({
   }, [mobileCartOpen, onMobileCartToggle]);
   const [showCameraScanner, setShowCameraScanner] = useState(false);
 
-  // Checkout confirmation modal states
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
   const [checkoutCustomerName, setCheckoutCustomerName] = useState("");
   const [checkoutPrintType, setCheckoutPrintType] = useState<"A5" | "Slip">("Slip");
 
-  // Manual/Thrift entry state
   const [manualSku, setManualSku] = useState("");
   const [manualName, setManualName] = useState("");
   const [manualPrice, setManualPrice] = useState(0);
@@ -106,13 +102,11 @@ export default function PosView({
   const [manualPriceType, setManualPriceType] = useState<"retail" | "wholesale">("retail");
   const [skuDropdownOpen, setSkuDropdownOpen] = useState(false);
 
-  // Derive categories from products
   const categories = useMemo(() => {
     const list = new Set(allProducts.map((p) => p.category).filter(Boolean));
     return ["All", ...Array.from(list)];
   }, [allProducts]);
 
-  // Filter products for grid (including variants)
   const filteredProducts = useMemo(() => {
     let result = allProducts;
     if (selectedCategory !== "All") {
@@ -130,7 +124,6 @@ export default function PosView({
     return result;
   }, [allProducts, selectedCategory, searchTerm]);
 
-  // Listen to manual sku input to autofill name & price
   useEffect(() => {
     const term = manualSku.toLowerCase().trim();
     if (!term) return;
@@ -147,12 +140,10 @@ export default function PosView({
     }
   }, [manualSku, manualPriceType, allProducts]);
 
-  // Calculate cart subtotal (using price type and item values, plus applied coupons)
   const cartTotals = useMemo(() => {
     let subtotal = 0;
     let totalCost = 0;
     cart.forEach((item) => {
-      // The item price is stored when added (supports custom variants or manual edits)
       const activePrice = item.price;
       const itemSub = activePrice * item.qty - (activePrice * item.qty * item.disc) / 100;
       subtotal += itemSub;
@@ -161,7 +152,6 @@ export default function PosView({
 
     const discountAmount = (subtotal * globalDiscount) / 100;
     
-    // Add coupon discount
     let couponDiscountAmount = 0;
     if (appliedCoupon) {
       if (appliedCoupon.type === "percent") {
@@ -185,7 +175,6 @@ export default function PosView({
     };
   }, [cart, globalDiscount, globalTax, priceTypeGlobal, allProducts, appliedCoupon]);
 
-  // Add standard product to cart, check for variants first
   const addToCart = (prod: Product) => {
     if (prod.hasVariants && prod.variants && prod.variants.length > 0) {
       setSelectedProductForVariant(prod);
@@ -242,7 +231,32 @@ export default function PosView({
     });
   };
 
-  // Add custom manual entry item
+  // 🔥 Cart item quantity update with +/- buttons
+  const updateCartQty = (id: string, newQty: number) => {
+    if (newQty < 1) {
+      setCart((prev) => prev.filter((item) => item.id !== id));
+      return;
+    }
+    const item = cart.find((i) => i.id === id);
+    if (!item) return;
+    const parts = item.id.split('_');
+    const prodId = parts[0];
+    const matchedOriginal = allProducts.find((p) => p.id === prodId);
+    if (matchedOriginal) {
+      if (newQty > matchedOriginal.quantity) {
+        alert(
+          lang === "my"
+            ? `"${item.name}" အတွက် လက်ကျန်မလုံလောက်ပါ။ (လက်ကျန်: ${matchedOriginal.quantity})`
+            : `Insufficient stock for "${item.name}"! (Available: ${matchedOriginal.quantity})`
+        );
+        return;
+      }
+    }
+    setCart((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, qty: newQty } : item))
+    );
+  };
+
   const handleAddManualItem = () => {
     if (!manualName || manualPrice <= 0) {
       alert(lang === "my" ? "ကုန်ပစ္စည်းအမည်နှင့် စျေးနှုန်း ထည့်သွင်းပေးရန် လိုအပ်ပါသည်!" : "Product name and price are required!");
@@ -277,8 +291,6 @@ export default function PosView({
     };
 
     setCart((prev) => [...prev, newItem]);
-
-    // Reset manual form
     setManualSku("");
     setManualName("");
     setManualPrice(0);
@@ -336,14 +348,13 @@ export default function PosView({
     alert(lang === "my" ? "ဘောက်ချာအချက်အလက်များကို Copy ကူးယူပြီးပါပြီ။ Viber သို့မဟုတ် Messenger တွင် Share နိုင်ပါပြီ။" : "Voucher copied to clipboard! Ready to share on Viber/Messenger.");
   };
 
-  // Barcode Scanner helper functions and Sound synthesizers
   const playScanSound = () => {
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
-      osc.frequency.setValueAtTime(880, ctx.currentTime); // High-pitched beep
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
       gain.gain.setValueAtTime(0.1, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
       osc.connect(gain);
@@ -351,7 +362,6 @@ export default function PosView({
       osc.start();
       osc.stop(ctx.currentTime + 0.1);
     } catch (err) {
-      // AudioContext blocked
     }
   };
 
@@ -404,14 +414,12 @@ export default function PosView({
     }
   };
 
-  // Global Barcode Keypress Listener (Plug-and-Play)
   useEffect(() => {
     let barcodeBuffer = "";
     let lastKeyTime = Date.now();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      // Do not intercept keystrokes inside other text inputs unless it's the search input or body
       if (
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") &&
         !target.classList.contains("barcode-receiver")
@@ -451,7 +459,6 @@ export default function PosView({
     return Math.max(0, cartTotals.finalTotal - splitPaymentsSum);
   }, [cartTotals.finalTotal, splitPaymentsSum]);
 
-  // Checkout core operation
   const startCheckoutFlow = (printType: "A5" | "Slip") => {
     if (cart.length === 0) {
       alert(lang === "my" ? "စျေးဝယ်လှည်းထဲတွင် ကုန်ပစ္စည်း မရှိသေးပါ။" : "No items in cart.");
@@ -467,7 +474,6 @@ export default function PosView({
       return;
     }
 
-    // Strict Inventory / Stock Safety Check (Prevent Negative Quantities)
     for (const item of cart) {
       if (!item.id.startsWith("custom-")) {
         const parts = item.id.split("_");
@@ -508,7 +514,6 @@ export default function PosView({
       }
     }
 
-    // Pre-fill customer name
     let initialName = "";
     if (selectedCustomerId === "Walk-in") {
       initialName = "";
@@ -524,7 +529,6 @@ export default function PosView({
     setIsCheckoutModalOpen(true);
   };
 
-  // Checkout core operation
   const handleCheckout = async (printType: "A5" | "Slip", finalCustomerName: string) => {
     if (cart.length === 0) {
       return;
@@ -538,7 +542,6 @@ export default function PosView({
     try {
       const batch = writeBatch(db);
 
-      // Sanitize items list to avoid undefined field values (e.g. variantId: undefined)
       const sanitizedItems = cart.map((item) => {
         const cleanedItem: any = {
           id: item.id || "",
@@ -552,10 +555,12 @@ export default function PosView({
         if (item.variantId !== undefined && item.variantId !== null) {
           cleanedItem.variantId = item.variantId;
         }
+        if (item.batchId !== undefined && item.batchId !== null) {
+          cleanedItem.batchId = item.batchId;
+        }
         return cleanedItem;
       });
 
-      // Create Sale Record
       const salesRef = doc(collection(db, "shops", shopId, "sales"));
       const saleData = {
         items: sanitizedItems,
@@ -584,7 +589,6 @@ export default function PosView({
       };
       batch.set(salesRef, saleData);
 
-      // Decrement Inventory (with Advanced Variant Support)
       cart.forEach((item) => {
         if (!item.id.startsWith("custom-")) {
           const parts = item.id.split("_");
@@ -607,15 +611,28 @@ export default function PosView({
                 quantity: newTotalQty,
               });
             } else {
-              batch.update(productRef, {
-                quantity: increment(-item.qty),
-              });
+              if (matchedOriginal.batches && matchedOriginal.batches.length > 0) {
+                let remaining = item.qty;
+                const updatedBatches = matchedOriginal.batches.map((b) => {
+                  if (remaining <= 0) return b;
+                  const take = Math.min(remaining, b.quantity);
+                  remaining -= take;
+                  return { ...b, quantity: b.quantity - take };
+                });
+                batch.update(productRef, { 
+                  batches: updatedBatches, 
+                  quantity: increment(-item.qty) 
+                });
+              } else {
+                batch.update(productRef, {
+                  quantity: increment(-item.qty),
+                });
+              }
             }
           }
         }
       });
 
-      // Update Customer accounts (Debt points)
       if (selectedCustomerId !== "Walk-in" && selectedCustomerId !== "custom") {
         const customerRef = doc(db, "shops", shopId, "customers", selectedCustomerId);
         const debtIncrease = isSplitPayment 
@@ -636,10 +653,8 @@ export default function PosView({
 
       await batch.commit();
 
-      // Trigger standard receipt printing window
       printReceipt(cart, cartTotals.finalTotal, customerName, printType);
 
-      // Set success sale for sharing and display
       const completedSale = {
         id: salesRef.id,
         items: cart,
@@ -656,7 +671,6 @@ export default function PosView({
       setLastCompletedSale(completedSale);
       setShowSuccessModal(true);
       
-      // Reset cart and checkout states for next sale
       setCart([]);
       setGlobalDiscount(0);
       setGlobalTax(0);
@@ -678,28 +692,37 @@ export default function PosView({
     }
   };
 
-  // Print system helper
   const printReceipt = (
     items: CartItem[],
     total: number,
     customer: string,
     type: "A5" | "Slip"
   ) => {
-    const isA5 = type === "A5";
+    const template = shopSettings.receiptTemplate || {
+      showLogo: false,
+      showAddress: true,
+      showPhone: true,
+      showFooter: true,
+      itemColumns: ['name', 'qty', 'price', 'total'],
+      fontSize: 'medium',
+      paperSize: 'slip',
+    };
+    const isA5 = type === "A5" || template.paperSize === "A5";
     const dateStr = new Date().toLocaleString();
+    const fontSizeClass = template.fontSize === 'small' ? '10px' : template.fontSize === 'large' ? '18px' : '14px';
     
     let html = `
-      <div style="font-family: sans-serif; padding: ${isA5 ? '30px' : '10px 5px'}; max-width: ${isA5 ? '148mm' : '58mm'}; margin: 0 auto; color: black; background: white;">
+      <div style="font-family: sans-serif; padding: ${isA5 ? '30px' : '10px 5px'}; max-width: ${isA5 ? '148mm' : '58mm'}; margin: 0 auto; color: black; background: white; font-size: ${fontSizeClass};">
         <center>
-          <h2 style="margin: 0; text-transform: uppercase; font-size: ${isA5 ? '24px' : '16px'}; font-weight: 900;">${shopName}</h2>
-          <p style="font-size: ${isA5 ? '12px' : '10px'}; margin: 3px 0;">
-            ${shopSettings.address || ''}<br>${shopSettings.phone || ''}
-          </p>
-          <p style="font-size: ${isA5 ? '12px' : '10px'}; color: #666; margin: 4px 0;">${dateStr}</p>
-          <p style="font-size: ${isA5 ? '14px' : '10px'}; margin: 5px 0;">ဝယ်သူ- <b>${customer}</b></p>
+          ${template.showLogo && shopSettings.logo ? `<img src="${shopSettings.logo}" style="max-width: 100px; margin: 0 auto;" />` : ''}
+          <h2 style="margin: 0; text-transform: uppercase; font-weight: 900;">${shopName}</h2>
+          ${template.showAddress ? `<p style="margin: 3px 0;">${shopSettings.address || ''}</p>` : ''}
+          ${template.showPhone ? `<p style="margin: 3px 0;">${shopSettings.phone || ''}</p>` : ''}
+          <p style="color: #666; margin: 4px 0;">${dateStr}</p>
+          <p style="margin: 5px 0;">ဝယ်သူ- <b>${customer}</b></p>
           <hr style="border-top: 1px dashed #000; margin: 10px 0;">
         </center>
-        <table style="width: 100%; font-size: ${isA5 ? '14px' : '12px'}; border-collapse: collapse;">
+        <table style="width: 100%; border-collapse: collapse;">
     `;
 
     if (isA5) {
@@ -714,7 +737,7 @@ export default function PosView({
     }
 
     items.forEach((item) => {
-      const originalProduct = allProducts.find((p) => p.id === item.id);
+      const originalProduct = allProducts.find((p) => p.id === item.id.split('_')[0]);
       let activePrice = item.price;
       if (originalProduct) {
         activePrice =
@@ -745,15 +768,14 @@ export default function PosView({
     html += `
         </table>
         <hr style="border-top: 1px dashed #000; margin: 10px 0;">
-        <h3 align="right" style="margin: 0; font-size: ${isA5 ? '20px' : '16px'}; font-weight: 900;">စုစုပေါင်း: ${total.toLocaleString()} Ks</h3>
-        <p align="right" style="font-size: ${isA5 ? '14px' : '10px'}; margin: 4px 0;">(${paymentMethod})</p>
+        <h3 align="right" style="margin: 0; font-weight: 900;">စုစုပေါင်း: ${total.toLocaleString()} Ks</h3>
+        <p align="right" style="margin: 4px 0;">(${paymentMethod})</p>
         <center>
-          <p style="font-size: ${isA5 ? '14px' : '10px'}; margin-top: 30px;">${shopSettings.footer || 'ကျေးဇူးတင်ပါသည်ခင်ဗျာ။'}</p>
+          ${template.showFooter ? `<p style="margin-top: 30px;">${shopSettings.footer || 'ကျေးဇူးတင်ပါသည်ခင်ဗျာ။'}</p>` : ''}
         </center>
       </div>
     `;
 
-    // Open printing window or hidden iframe fallback
     const printFrame = document.createElement("iframe");
     printFrame.style.position = "fixed";
     printFrame.style.right = "0";
@@ -787,15 +809,14 @@ export default function PosView({
     }
   };
 
+  // 🔥 New UI rendering
   return (
     <div className={`w-full h-full flex flex-col lg:flex-row overflow-hidden relative ${theme.bgOuter} ${theme.isLight ? "text-slate-800" : "text-slate-200"} font-sans`}>
-      {/* Background Glow Effect */}
       <div className={`absolute top-0 right-0 -mr-40 -mt-40 w-96 h-96 ${theme.glow1} blur-[120px] rounded-full pointer-events-none`}></div>
       <div className={`absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 ${theme.glow2} blur-[100px] rounded-full pointer-events-none`}></div>
 
       {/* Product/Search Section */}
       <div className={`flex-1 flex flex-col h-full relative overflow-hidden border-r ${theme.border} z-10`}>
-        {/* Top bar */}
         <div className={`${theme.isLight ? "bg-slate-100/50" : "bg-black/20"} backdrop-blur-md border-b ${theme.border} p-4 flex items-center gap-4 shrink-0 justify-between`}>
           <div className="flex items-center gap-3">
             <motion.button
@@ -857,10 +878,8 @@ export default function PosView({
           )}
         </div>
 
-        {/* Tab - Product Grid */}
         {posTab === "grid" && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Category selection */}
             <div className={`bg-black/10 border-b ${theme.border} shrink-0 py-3 px-4 overflow-x-auto no-scrollbar flex items-center gap-2`}>
               <motion.button
                 whileHover={{ scale: 1.06 }}
@@ -889,60 +908,40 @@ export default function PosView({
               ))}
             </div>
 
-            {/* Grid */}
+            {/* 🔥 New Grid with Images */}
             <div className="flex-1 overflow-y-auto p-4 pb-24 lg:p-4 no-scrollbar">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {filteredProducts.map((p) => {
-                  const isLow = p.quantity <= (p.lowStockThreshold || 5);
                   const isOutOfStock = p.quantity <= 0;
                   return (
-                    <motion.div
-                      whileHover={isOutOfStock ? {} : { scale: 1.03, translateY: -4 }}
-                      whileTap={isOutOfStock ? {} : { scale: 0.97 }}
-                      key={p.id}
-                      onClick={() => !isOutOfStock && addToCart(p)}
-                      className={`bg-[#0a0a0a]/80 backdrop-blur-md rounded-3xl border overflow-hidden flex flex-col relative group shadow-sm hover:shadow-lg transition-all p-3 pb-4 ${
-                        isOutOfStock 
-                          ? "opacity-40 border-rose-500/20 cursor-not-allowed" 
-                          : "border-white/5 hover:border-indigo-500/30 cursor-pointer"
-                      }`}
-                    >
-                      <div className="h-24 bg-white/5 rounded-2xl flex items-center justify-center mb-3 relative overflow-hidden group-hover:bg-white/10 transition">
-                        <Layers size={36} className="text-slate-600 group-hover:text-indigo-400 transition" />
-                        {p.category && (
-                          <span className="absolute top-2 left-2 bg-black/80 text-[9px] font-black px-2 py-0.5 rounded-lg text-slate-400 border border-white/5">
-                            {p.category}
-                          </span>
-                        )}
-                        {!isOutOfStock && (
-                          <div className="absolute inset-0 bg-indigo-500/10 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
-                            <Plus size={24} className="text-indigo-400" />
+                    <div key={p.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col relative">
+                      <div className="h-32 bg-slate-100 relative border-b border-slate-100">
+                        {p.imageUrl ? (
+                          <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-300">
+                            <Layers size={32} />
                           </div>
                         )}
+                        {!isOutOfStock && (
+                          <button 
+                            onClick={() => addToCart(p)}
+                            className="absolute bottom-2 right-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full p-2 shadow-md transition cursor-pointer"
+                          >
+                            <Plus size={16} />
+                          </button>
+                        )}
                       </div>
-                      <div className="text-xs font-bold leading-tight mb-2 text-white line-clamp-2 h-8 font-display">
-                        {p.name}
-                      </div>
-                      <div className="flex items-center justify-between mt-auto">
-                        <div className="text-indigo-400 font-black text-sm font-display">
-                          {(p.retailPrice || 0).toLocaleString()}{" "}
-                          <span className="text-[9px] font-bold text-slate-500 font-display">Ks</span>
-                        </div>
-                        <div
-                          className={`text-[9px] px-2 py-0.5 rounded-lg border font-bold ${
-                            isOutOfStock
-                              ? "text-rose-500 bg-rose-500/20 border-rose-500/30 font-black"
-                              : isLow
-                              ? "text-rose-400 bg-rose-500/10 border-rose-500/20"
-                              : "text-slate-400 bg-white/5 border-white/10"
-                          }`}
-                        >
-                          {isOutOfStock 
-                            ? (lang === "my" ? "ရောင်းကုန်ပြီ" : "Out of Stock") 
-                            : `${p.quantity}${lang === "my" ? "ခုကျန်" : " left"}`}
+                      <div className="p-3 flex flex-col gap-1">
+                        <h3 className="font-bold text-slate-800 text-sm line-clamp-2">{p.name}</h3>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-emerald-600 font-bold text-sm">{(p.retailPrice || 0).toLocaleString()} Ks</span>
+                          {isOutOfStock && (
+                            <span className="text-[9px] font-bold text-rose-500 bg-rose-100 px-2 py-0.5 rounded-full">Out of Stock</span>
+                          )}
                         </div>
                       </div>
-                    </motion.div>
+                    </div>
                   );
                 })}
               </div>
@@ -950,7 +949,6 @@ export default function PosView({
           </div>
         )}
 
-        {/* Tab - Manual entry */}
         {posTab === "thrift" && (
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-24 bg-[#0a0a0a]/90 backdrop-blur-md m-4 rounded-3xl border border-white/5 shadow-2xl max-w-xl mx-auto w-[92%] relative z-10">
             <h3 className="text-lg font-black text-white mb-6 flex items-center gap-2 font-display">
@@ -1032,7 +1030,6 @@ export default function PosView({
           </div>
         )}
 
-        {/* Mobile floating Cart Bar */}
         <div className="lg:hidden fixed bottom-20 left-4 right-4 z-30">
           <button
             onClick={() => setMobileCartOpen(true)}
@@ -1059,13 +1056,12 @@ export default function PosView({
         </div>
       </div>
 
-      {/* Cart Sidebar (Desktop/Mobile overlay) */}
+      {/* Cart Sidebar */}
       <div
         className={`fixed lg:static inset-y-0 right-0 z-50 w-[90%] sm:w-[400px] lg:w-[380px] xl:w-[420px] bg-[#0a0a0a] border-l border-white/5 shadow-2xl lg:shadow-none transform ${
           mobileCartOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"
         } transition-transform duration-300 flex flex-col h-full`}
       >
-        {/* Header */}
         <div className="p-4 border-b border-white/5 flex justify-between items-center bg-[#0a0a0a] shrink-0">
           <h2 className="text-base font-black text-white flex items-center gap-2 font-display">
             <ShoppingCart size={18} className="text-indigo-400" /> {lang === "my" ? "လတ်တလော အော်ဒါ" : "Current Order"}
@@ -1112,9 +1108,7 @@ export default function PosView({
           </div>
         </div>
 
-        {/* Scrollable Container for Sidebar Contents (Fixes Mobile Checkout Overlap) */}
         <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4">
-            {/* Customer & global wholesale toggle */}
             <div className="bg-white/5 p-3 rounded-2xl border border-white/10 shadow-sm relative">
               <div className="relative">
                 <div className="flex items-center gap-2 bg-black/20 px-3 py-2 rounded-xl border border-white/5 shadow-inner">
@@ -1124,7 +1118,6 @@ export default function PosView({
                     value={customerSearch}
                     onFocus={() => setIsCustomerDropdownOpen(true)}
                     onBlur={() => {
-                      // Small delay to allow clicking options before dropdown closes
                       setTimeout(() => setIsCustomerDropdownOpen(false), 200);
                     }}
                     onChange={(e) => {
@@ -1164,10 +1157,8 @@ export default function PosView({
                   )}
                 </div>
 
-                {/* Dropdown panel */}
                 {isCustomerDropdownOpen && (
                   <div className="absolute left-0 right-0 mt-1 bg-[#121212] border border-white/10 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-white/5 no-scrollbar">
-                    {/* Walk-in Option */}
                     <div
                       onMouseDown={() => {
                         setSelectedCustomerId("Walk-in");
@@ -1181,7 +1172,6 @@ export default function PosView({
                       {selectedCustomerId === "Walk-in" && <span className="text-indigo-400 text-[10px]">✓</span>}
                     </div>
 
-                    {/* Filtered customers */}
                     {customers
                       .filter(c => 
                         c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
@@ -1205,7 +1195,6 @@ export default function PosView({
                         </div>
                       ))}
 
-                    {/* Quick creation of a new customer if it's custom and name is typed */}
                     {selectedCustomerId === "custom" && customerSearch.trim() !== "" && (
                       <div
                         onMouseDown={async (e) => {
@@ -1270,7 +1259,23 @@ export default function PosView({
               </div>
             </div>
 
-            {/* Cart Item list */}
+            {warehouses.length > 0 && (
+              <div className="bg-white/5 p-3 rounded-2xl border border-white/10 shadow-sm relative">
+                <div className="flex items-center justify-between text-[11px] font-black text-slate-400">
+                  <span>{lang === "my" ? "ဂိုဒေါင်" : "Warehouse"}</span>
+                  <select
+                    value={selectedWarehouse}
+                    onChange={(e) => setSelectedWarehouse(e.target.value)}
+                    className="bg-black/20 border border-white/10 text-white rounded-lg text-xs p-1"
+                  >
+                    <option value="">{lang === "my" ? "ရွေးချယ်ပါ" : "Select"}</option>
+                    {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* 🔥 Cart Items with +/- controls */}
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 no-scrollbar">
               {cart.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-8 text-slate-600 border border-white/5 border-dashed rounded-2xl">
@@ -1279,40 +1284,28 @@ export default function PosView({
                 </div>
               ) : (
                 cart.map((item, idx) => {
-                  const originalProduct = allProducts.find((p) => p.id === item.id.split("_")[0]);
-                  const activePrice = item.price;
-                  const sub = activePrice * item.qty - (activePrice * item.qty * item.disc) / 100;
+                  const sub = item.price * item.qty - (item.price * item.qty * item.disc) / 100;
                   return (
-                    <div
-                      key={idx}
-                      className="flex justify-between items-start bg-white/5 border border-white/5 p-3 rounded-2xl shadow-sm"
-                    >
-                      <div className="flex gap-3 overflow-hidden">
-                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-xs font-black text-white shrink-0">
-                          x{item.qty}
-                        </div>
-                        <div className="overflow-hidden">
-                          <p className="text-xs font-bold text-slate-200 line-clamp-2 leading-tight mb-1 font-display">
-                            {item.name}
-                          </p>
-                          <p className="text-[10px] font-semibold text-slate-400">
-                            {activePrice.toLocaleString()} Ks{" "}
-                            {item.disc > 0 && (
-                              <span className="text-rose-400 bg-rose-500/10 px-1 rounded border border-rose-500/10">
-                                -{item.disc}%
-                              </span>
-                            )}
-                          </p>
-                        </div>
+                    <div key={idx} className="flex justify-between items-center bg-white border border-slate-200 p-3 rounded-xl shadow-sm">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-slate-800 text-sm">{item.name}</span>
+                        <span className="text-slate-500 text-xs">{item.price.toLocaleString()} Ks</span>
                       </div>
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        <p className="text-xs font-black text-white font-display">{sub.toLocaleString()}</p>
-                        <button
-                          onClick={() => removeFromCart(idx)}
-                          className="text-rose-400 hover:text-rose-500 bg-rose-500/10 border border-rose-500/10 p-1.5 rounded-lg cursor-pointer"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2 bg-slate-100 rounded-full px-1.5 py-0.5 border border-slate-200">
+                          <button 
+                            onClick={() => updateCartQty(item.id, item.qty - 1)}
+                            className="w-6 h-6 flex items-center justify-center text-slate-600 hover:text-rose-500 text-sm font-bold transition"
+                          >-</button>
+                          <span className="w-5 text-center text-xs font-bold text-slate-800">{item.qty}</span>
+                          <button 
+                            onClick={() => updateCartQty(item.id, item.qty + 1)}
+                            className="w-6 h-6 flex items-center justify-center text-slate-600 hover:text-emerald-500 text-sm font-bold transition"
+                          >+</button>
+                        </div>
+                        <span className="font-bold text-slate-900 text-sm min-w-[50px] text-right">
+                          {sub.toLocaleString()} Ks
+                        </span>
                       </div>
                     </div>
                   );
@@ -1320,7 +1313,6 @@ export default function PosView({
               )}
             </div>
 
-            {/* Coupons Promo Code Section */}
             <div className="p-3 bg-white/5 rounded-2xl border border-white/10 space-y-2">
               <div className="flex justify-between items-center">
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{lang === "my" ? "ပရိုမိုးရှင်းကုဒ်" : "Promo Coupons"}</span>
@@ -1348,7 +1340,6 @@ export default function PosView({
               </div>
             </div>
 
-            {/* Split Payment Section */}
             <div className="p-3 bg-white/5 rounded-2xl border border-white/10 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
@@ -1385,8 +1376,6 @@ export default function PosView({
                       </div>
                     </div>
                   ))}
-                  
-                  {/* Split Validation Feedback */}
                   <div className="flex justify-between items-center text-[10px] font-black pt-2 border-t border-white/5">
                     <span className="text-slate-400">Allocated: {splitPaymentsSum.toLocaleString()} / {cartTotals.finalTotal.toLocaleString()} Ks</span>
                     {remainingSplitBalance > 0 ? (
@@ -1399,7 +1388,6 @@ export default function PosView({
               )}
             </div>
 
-            {/* Payment Method selection (if NOT split payment) - inside Scrollable Container */}
             {!isSplitPayment && (
               <div className="p-3 bg-white/5 rounded-2xl border border-white/10 space-y-2">
                 <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-2">
@@ -1433,7 +1421,6 @@ export default function PosView({
               </div>
             )}
 
-            {/* Global Discount % and Tax % inputs - inside Scrollable Container */}
             <div className="flex gap-2">
               <div className="flex-1 bg-white/5 border border-white/10 rounded-xl p-2 flex items-center justify-between">
                 <span className="text-[9px] font-black text-slate-400">Discount%</span>
@@ -1456,10 +1443,7 @@ export default function PosView({
             </div>
         </div>
 
-        {/* Pricing Actions (Sticky Footer) */}
         <div className="p-4 pb-safe sm:pb-4 bg-[#0a0a0a] border-t border-white/10 shadow-2xl shrink-0">
-
-            {/* Totals Summary */}
             <div className="space-y-1 text-xs font-semibold mb-4 border-t border-white/5 pt-3">
               <div 
                 onClick={() => {
@@ -1540,7 +1524,6 @@ export default function PosView({
           </div>
       </div>
 
-      {/* Overlay background on mobile */}
       {mobileCartOpen && (
         <div
           onClick={() => setMobileCartOpen(false)}
@@ -1548,11 +1531,6 @@ export default function PosView({
         />
       )}
 
-      {/* ========================================================================= */}
-      {/* ADVANCED MODALS & NOTIFICATIONS OVERLAYS */}
-      {/* ========================================================================= */}
-
-      {/* Barcode Scanner Indicator Alert Toast */}
       {scanMessage && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2 border transition-all duration-300 ${
           scanIsError 
@@ -1564,7 +1542,6 @@ export default function PosView({
         </div>
       )}
 
-      {/* Checkout Confirmation & Custom Customer Name Modal */}
       {isCheckoutModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-55 flex items-center justify-center p-4">
           <motion.div
@@ -1607,7 +1584,6 @@ export default function PosView({
               </div>
             </div>
 
-            {/* Customer Name Input Field */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider block">
                 {lang === "my" ? "ဝယ်သူအမည်" : "Customer Name"}
@@ -1630,7 +1606,6 @@ export default function PosView({
               </p>
             </div>
 
-            {/* Action buttons */}
             <div className="grid grid-cols-2 gap-2 pt-2">
               <button
                 onClick={() => setIsCheckoutModalOpen(false)}
@@ -1652,7 +1627,6 @@ export default function PosView({
         </div>
       )}
 
-      {/* Product Variant Selection Modal */}
       {selectedProductForVariant && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-[#0c0c0c] border border-white/10 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
@@ -1702,7 +1676,6 @@ export default function PosView({
         </div>
       )}
 
-      {/* Checkout Success Screen & Receipt Sharing Modal */}
       {showSuccessModal && lastCompletedSale && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-[#0d0d0d] border border-white/10 w-full max-w-md rounded-3xl p-6 shadow-2xl relative text-center">
@@ -1715,7 +1688,6 @@ export default function PosView({
             </h3>
             <p className="text-xs text-slate-400 mb-6">Voucher: #{lastCompletedSale.id.substring(0, 8)}</p>
 
-            {/* Receipt Summary Box */}
             <div className="bg-white/5 rounded-2xl border border-white/5 p-4 text-left space-y-3 mb-6">
               <div className="flex justify-between text-xs text-slate-400">
                 <span>Customer:</span>
@@ -1735,7 +1707,6 @@ export default function PosView({
               </div>
             </div>
 
-            {/* Print and Share buttons */}
             <div className="space-y-2">
               <button
                 onClick={() => {
@@ -1766,7 +1737,6 @@ export default function PosView({
         </div>
       )}
 
-      {/* Camera Barcode Scanner Modal overlay */}
       <CameraScannerModal
         isOpen={showCameraScanner}
         onClose={() => setShowCameraScanner(false)}
@@ -1778,9 +1748,7 @@ export default function PosView({
   );
 }
 
-// =========================================================================
-// CAMERA BARCODE / QR SCANNER MODAL WITH DEVELOPER SIMULATOR
-// =========================================================================
+// Camera Scanner Modal (unchanged)
 function CameraScannerModal({
   isOpen,
   onClose,
@@ -1797,7 +1765,6 @@ function CameraScannerModal({
   const [error, setError] = useState<string | null>(null);
   const [manualBarcode, setManualBarcode] = useState("");
 
-  // Get list of existing SKUs to let user select / click for simulation
   const availableSkus = useMemo(() => {
     const skus: { sku: string; name: string }[] = [];
     allProducts.forEach((p) => {
@@ -1818,7 +1785,6 @@ function CameraScannerModal({
     let isMounted = true;
     setError(null);
 
-    // Give DOM a split-second to mount the container element
     const timer = setTimeout(() => {
       if (!isMounted) return;
       try {
@@ -1844,7 +1810,6 @@ function CameraScannerModal({
           {
             fps: 24,
             qrbox: (width, height) => {
-              // Rectangle box styled specifically for scan line targeting of 1D barcodes
               return {
                 width: Math.min(width * 0.9, 320),
                 height: Math.min(height * 0.45, 140),
@@ -1859,7 +1824,6 @@ function CameraScannerModal({
             onClose();
           },
           () => {
-            // Quiet mode during frame analysis failures
           }
         ).catch((err) => {
           console.warn("Scanner initiation error:", err);
@@ -1900,7 +1864,6 @@ function CameraScannerModal({
           {lang === "my" ? "ကုန်ပစ္စည်း Barcode ကို ကင်မရာရှေ့တွင်ပြပါ" : "Align barcode or QR code inside the guide box"}
         </p>
 
-        {/* Camera Viewport */}
         <div className="relative aspect-video w-full bg-black rounded-2xl overflow-hidden border border-white/5 mb-4 flex flex-col items-center justify-center">
           <div id="reader" className="w-full h-full" />
           
@@ -1915,7 +1878,6 @@ function CameraScannerModal({
           )}
         </div>
 
-        {/* Barcode Simulator / Manual Typing Option */}
         <div className="border-t border-white/5 pt-4 space-y-3 flex-1 overflow-y-auto no-scrollbar">
           <div>
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-2">

@@ -8,9 +8,12 @@ import {
   collection, doc, addDoc, updateDoc, deleteDoc, getDocs, 
   onSnapshot, query, orderBy, limit, setDoc, serverTimestamp, where
 } from "firebase/firestore";
-import { Product, Customer, Supplier, ShopSettings, Expense, Purchase, Payroll, Shift } from "../types";
+import { Product, Customer, Supplier, ShopSettings, Expense, Purchase, Payroll, Shift, Warehouse } from "../types";
 import { THEMES, getTheme } from "../lib/theme";
 import { translations, Language } from "../lib/translations";
+import bwipjs from 'bwip-js';
+import RefundModal from "./RefundModal";
+import StockTransferModal from "./StockTransferModal";
 
 interface ModalsProps {
   modalType: string;
@@ -20,6 +23,7 @@ interface ModalsProps {
   allProducts: Product[];
   customers: Customer[];
   suppliers: Supplier[];
+  warehouses?: Warehouse[];
   lang?: Language;
   onClose: () => void;
   onSettingsSaved: (settings: ShopSettings) => void;
@@ -33,12 +37,12 @@ export default function Modals({
   allProducts,
   customers,
   suppliers,
+  warehouses = [],
   lang = "en",
   onClose,
   onSettingsSaved,
 }: ModalsProps) {
   const t = translations[lang];
-  // Common loading states
   const [loading, setLoading] = useState(false);
 
   // --- Modal - Add Product State ---
@@ -56,6 +60,8 @@ export default function Modals({
   const [vRetail, setVRetail] = useState(0);
   const [vWhole, setVWhole] = useState(0);
   const [vQty, setVQty] = useState(10);
+  const [barcodeDataUrl, setBarcodeDataUrl] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   // --- Modal - Add Customer State ---
   const [cName, setCName] = useState("");
@@ -67,9 +73,23 @@ export default function Modals({
   const [sAdd, setSAdd] = useState(shopSettings.address || "");
   const [sFoot, setSFoot] = useState(shopSettings.footer || "ကျေးဇူးတင်ပါသည်ခင်ဗျာ။");
   const [sTheme, setSTheme] = useState(shopSettings.theme || "cosmic-indigo");
+  const [sReceiptTemplate, setSReceiptTemplate] = useState(shopSettings.receiptTemplate || {
+    showLogo: false,
+    showAddress: true,
+    showPhone: true,
+    showFooter: true,
+    itemColumns: ['name', 'qty', 'price', 'total'],
+    fontSize: 'medium',
+    paperSize: 'slip',
+  });
 
   // --- Modal - Supplier add State ---
   const [suppName, setSuppName] = useState("");
+
+  // --- Sub-modals ---
+  const [showRefundModal, setShowRefundModal] = useState(false);
+  const [refundSale, setRefundSale] = useState<any>(null);
+  const [showStockTransferModal, setShowStockTransferModal] = useState(false);
 
   // --- Lists with dynamic subscription inside modal ---
   const [listData, setListData] = useState<any[]>([]);
@@ -113,7 +133,6 @@ export default function Modals({
       unsub = onSnapshot(q, (snap) => {
         const items: any[] = [];
         snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
-        // Sort manually by date since multiple filters can trigger firebase index requirement
         items.sort((a, b) => {
           const tA = a.createdAt?.toMillis() || 0;
           const tB = b.createdAt?.toMillis() || 0;
@@ -146,6 +165,21 @@ export default function Modals({
     }
     setLoading(true);
     try {
+      let imageUrl = '';
+      // 🔥 ImgBB Upload with provided API key
+      if (imageFile) {
+        const formData = new FormData();
+        formData.append('image', imageFile);
+        const res = await fetch(`https://api.imgbb.com/1/upload?key=fca43303d3bb6971a4c61e422bf6ddd5`, {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (data.success) {
+          imageUrl = data.data.url;
+        }
+      }
+
       const computedQty = hasVariants 
         ? productVariants.reduce((sum, v) => sum + v.quantity, 0) 
         : (pQty || 0);
@@ -161,6 +195,8 @@ export default function Modals({
         lowStockThreshold: 5,
         hasVariants: hasVariants,
         variants: hasVariants ? productVariants : null,
+        barcode: barcodeDataUrl,
+        imageUrl: imageUrl, // Save image URL
       });
       alert(lang === "my" ? "ကုန်ပစ္စည်းအသစ် ထည့်သွင်းပြီးပါပြီ။" : "Product added successfully!");
       onClose();
@@ -204,6 +240,7 @@ export default function Modals({
         phone: sPhone,
         address: sAdd,
         theme: sTheme,
+        receiptTemplate: sReceiptTemplate,
       };
       await setDoc(doc(db, "shops", shopId, "settings", "general"), payload, { merge: true });
       onSettingsSaved(payload);
@@ -281,7 +318,6 @@ export default function Modals({
     }
   };
 
-  // Stock Adjust Action helper
   const [adjProdId, setAdjProdId] = useState("");
   const [adjQty, setAdjQty] = useState(0);
   const handleStockAdjustment = async () => {
@@ -298,7 +334,6 @@ export default function Modals({
     }
   };
 
-  // COD Collector Status Update
   const handleCollectCOD = async (saleId: string) => {
     if (window.confirm(lang === "my" ? "ငွေကောက်ခံရရှိပြီးကြောင်း သေချာပါသလား?" : "Are you sure you have collected this cash?")) {
       try {
@@ -333,11 +368,9 @@ export default function Modals({
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] backdrop-blur-md p-4 font-sans">
       <div className="bg-[#0a0a0a]/95 rounded-[2rem] shadow-2xl w-full max-w-xl max-h-[90vh] overflow-hidden border border-white/5 flex flex-col relative">
-        {/* Glow Effects */}
         <div className="absolute top-0 right-0 -mr-20 -mt-20 w-48 h-48 bg-indigo-500/10 blur-[60px] rounded-full pointer-events-none"></div>
         <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-48 h-48 bg-purple-500/10 blur-[60px] rounded-full pointer-events-none"></div>
 
-        {/* Modal Header */}
         <div className="p-6 border-b border-white/5 flex justify-between items-center shrink-0 relative z-10">
           <h2 className="text-xl font-black text-white capitalize tracking-tight font-display">
             {getModalTitle()}
@@ -350,9 +383,8 @@ export default function Modals({
           </button>
         </div>
 
-        {/* Modal Body scrollable */}
         <div className="p-6 overflow-y-auto flex-1 no-scrollbar space-y-4 relative z-10">
-          {/* 1. Modal: Add Product */}
+          
           {modalType === "add-product" && (
             <div className="space-y-4">
               <div>
@@ -378,17 +410,62 @@ export default function Modals({
                 </div>
                 <div>
                   <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">{t.barcodeSku}</label>
-                  <input
-                    type="text"
-                    value={pSku}
-                    onChange={(e) => setPSku(e.target.value)}
-                    placeholder="SKU / Barcode..."
-                    className="w-full p-4 bg-white/5 border border-white/10 text-white placeholder:text-slate-600 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 outline-none transition"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={pSku}
+                      onChange={(e) => setPSku(e.target.value)}
+                      placeholder="SKU / Barcode..."
+                      className="flex-1 p-4 bg-white/5 border border-white/10 text-white placeholder:text-slate-600 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 outline-none transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!pSku) {
+                          alert(lang === "my" ? "SKU မရှိသေးပါ။" : "Please enter a SKU first.");
+                          return;
+                        }
+                        try {
+                          const canvas = document.createElement('canvas');
+                          bwipjs.toCanvas(canvas, {
+                            bcid: 'code128',
+                            text: pSku,
+                            scale: 2,
+                            includetext: true,
+                            textxalign: 'center',
+                          });
+                          const dataUrl = canvas.toDataURL('image/png');
+                          setBarcodeDataUrl(dataUrl);
+                        } catch (err) {
+                          alert("Error generating barcode: " + err);
+                        }
+                      }}
+                      className="bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 py-3 px-4 rounded-xl text-xs font-black transition"
+                    >
+                      Generate
+                    </button>
+                  </div>
+                  {barcodeDataUrl && (
+                    <div className="mt-2 flex justify-center">
+                      <img src={barcodeDataUrl} alt="Barcode" className="border border-white/10 rounded-lg p-2 bg-white" />
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Product Variants Toggle */}
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">{lang === "my" ? "ပုံတင်ရန်" : "Product Image"}</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+                  className="w-full p-2 bg-white/5 border border-white/10 rounded-2xl text-sm font-semibold text-white outline-none"
+                />
+                {imageFile && (
+                  <p className="text-xs text-emerald-400 mt-1">{imageFile.name} (Uploaded)</p>
+                )}
+              </div>
+
               <div className="flex items-center justify-between bg-white/5 p-4 rounded-2xl border border-white/10 my-2">
                 <div>
                   <h4 className="text-xs font-black text-white">{lang === "my" ? "အမျိုးအစားကွဲများ သတ်မှတ်မည် (Variants)" : "Enable Product Variants"}</h4>
@@ -449,7 +526,6 @@ export default function Modals({
                 )}
               </div>
 
-              {/* Dynamic Variants Form */}
               {hasVariants && (
                 <div className="bg-white/5 p-4 rounded-2xl border border-white/10 space-y-3">
                   <h4 className="text-xs font-black text-indigo-400 uppercase tracking-wider">{lang === "my" ? "အမျိုးအစားကွဲ ထည့်သွင်းခြင်း" : "Add Variant"}</h4>
@@ -536,7 +612,6 @@ export default function Modals({
                     + {lang === "my" ? "ဗားရှင်းအသစ်ထည့်မည်" : "Add Variant"}
                   </button>
 
-                  {/* Render added variants list */}
                   {productVariants.length > 0 && (
                     <div className="pt-2 space-y-2 border-t border-white/5 mt-3">
                       <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">{lang === "my" ? "ထည့်သွင်းပြီးသော ဗားရှင်းများ" : "Added Variants"}</p>
@@ -575,7 +650,6 @@ export default function Modals({
             </div>
           )}
 
-          {/* 2. Modal: System Settings */}
           {modalType === "settings" && (
             <div className="space-y-4">
               <div>
@@ -648,10 +722,8 @@ export default function Modals({
             </div>
           )}
 
-          {/* 3. Modal: Customers Management */}
           {modalType === "customers" && (
             <div className="space-y-6">
-              {/* Add Customer Form */}
               <div className="bg-white/5 p-4 rounded-2xl border border-white/10 space-y-3">
                 <p className="text-xs font-black text-slate-400 uppercase tracking-wider font-display">{t.addCustomer}</p>
                 <input
@@ -676,7 +748,6 @@ export default function Modals({
                 </button>
               </div>
 
-              {/* Customers list */}
               <div className="space-y-2 max-h-[40vh] overflow-y-auto no-scrollbar">
                 <p className="text-xs font-black text-slate-500 uppercase tracking-widest font-display">{t.customersListLabel}</p>
                 {customers.map((c) => (
@@ -723,7 +794,6 @@ export default function Modals({
             </div>
           )}
 
-          {/* 4. Modal: Suppliers */}
           {modalType === "suppliers" && (
             <div className="space-y-6">
               <div className="bg-white/5 p-4 rounded-2xl border border-white/10 flex gap-2">
@@ -780,60 +850,6 @@ export default function Modals({
             </div>
           )}
 
-          {/* 5. Modal: COD Tracking */}
-          {modalType === "cod" && (
-            <div className="space-y-4">
-              <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl">
-                <p className="text-[10px] font-black text-amber-400 uppercase mb-1">{lang === "my" ? "စုစုပေါင်းကောက်ခံရန် COD" : "Total Pending COD"}</p>
-                <p className="text-xl font-black text-amber-300 font-display">
-                  {listData
-                    .filter((s) => s.codStatus === "Pending")
-                    .reduce((sum, s) => sum + (s.total || 0), 0)
-                    .toLocaleString()}{" "}
-                  Ks
-                </p>
-              </div>
-
-              <div className="space-y-2 max-h-[50vh] overflow-y-auto no-scrollbar">
-                {listData.map((s) => {
-                  const isPending = s.codStatus === "Pending";
-                  const itemsStr = (s.items || []).map((i: any) => i.name).join(", ");
-                  return (
-                    <div
-                      key={s.id}
-                      className="bg-white/5 p-4 rounded-xl border border-white/5 shadow-sm flex justify-between items-center"
-                    >
-                      <div className="overflow-hidden mr-2">
-                        <p className="font-bold text-xs text-slate-200 truncate font-display">{itemsStr || (lang === "my" ? "အမည်မသိ ပစ္စည်းများ" : "Unknown Items")}</p>
-                        <p className="text-[9px] text-slate-500 font-semibold">
-                          {s.createdAt?.toDate().toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        <span className="font-black text-sm text-indigo-400 font-display">
-                          {(s.total || 0).toLocaleString()} Ks
-                        </span>
-                        {isPending ? (
-                          <button
-                            onClick={() => handleCollectCOD(s.id)}
-                            className="bg-white/10 text-white hover:bg-white/20 px-3 py-1.5 rounded-xl text-[10px] font-black border border-white/10 transition cursor-pointer"
-                          >
-                            {lang === "my" ? "ငွေလက်ခံမည်" : "Collect Cash"}
-                          </button>
-                        ) : (
-                          <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-bold px-2 py-1 rounded">
-                            {lang === "my" ? "ကောက်ယူပြီး" : "Collected"}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* 6. Modal: Expenses / Finance logs entry */}
           {(modalType === "expenses" || modalType === "purchase-list" || modalType === "payroll") && (
             <FinanceManager
               type={modalType}
@@ -850,7 +866,6 @@ export default function Modals({
             />
           )}
 
-          {/* 7. Modal: Low Stock Alerts */}
           {modalType === "low-stock" && (
             <div className="space-y-2 max-h-[50vh] overflow-y-auto no-scrollbar">
               {allProducts
@@ -877,7 +892,6 @@ export default function Modals({
             </div>
           )}
 
-          {/* 8. Modal: Stock Adjustment */}
           {modalType === "stock-adjust" && (
             <div className="space-y-4">
               <div className="bg-white/5 p-4 rounded-2xl border border-white/10 space-y-3 shadow-inner">
@@ -912,7 +926,6 @@ export default function Modals({
             </div>
           )}
 
-          {/* 9. Modal: Shift logs */}
           {modalType === "shifts" && (
             <div className="space-y-4">
               <div className="flex gap-3 shrink-0">
@@ -952,7 +965,6 @@ export default function Modals({
             </div>
           )}
 
-          {/* 10. Modal: Sales historical ledger overview */}
           {modalType === "sales-list" && (
             <div className="space-y-2 max-h-[60vh] overflow-y-auto no-scrollbar">
               {listData.map((s) => {
