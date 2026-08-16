@@ -1,6 +1,0 @@
-{
-  "name": "Swift POS",
-  "description": "Full Enterprise POS Management System with Real-Time Inventory, Financial Tracking, and Gemini AI Business Analyst.",
-  "requestFramePermissions": ["camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
