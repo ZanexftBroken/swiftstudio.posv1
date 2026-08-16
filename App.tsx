@@ -3,7 +3,7 @@ import {
   Store, Settings, LogOut, ArrowLeft, Plus, Search, 
   Trash2, Layers, Landmark, BarChart3, Brain, LayoutDashboard, 
   ShoppingCart, Package, ListChecks, Users, HelpCircle, Truck, 
-  Clock, DollarSign, ArrowUpRight, TrendingUp, Award, Percent, Calendar, Building2, ChevronDown
+  Clock, DollarSign, ArrowUpRight, TrendingUp, Award, Percent, Calendar, Building2, ChevronDown, Sparkles, ShieldCheck
 } from "lucide-react";
 import { auth, db } from "./firebase";
 import { 
@@ -85,13 +85,6 @@ export default function App() {
       setActiveBranchId(currentUserData.assignedBranchId);
     }
   }, [currentUserData]);
-
-  // Protect branches management view for staff
-  useEffect(() => {
-    if (isStaffUser && currentView === "branches") {
-      setCurrentView("dashboard");
-    }
-  }, [isStaffUser, currentView]);
 
   const handleSelectBranch = (branch: Branch | "all") => {
     setIsBranchDropdownOpen(false);
@@ -298,16 +291,27 @@ export default function App() {
       
       if (items.length === 0) {
         const defaultBranchRef = doc(collection(db, "shops", shopId, "branches"));
+        const initialBranch: Branch = {
+          id: defaultBranchRef.id,
+          name: "Main Branch / ပင်မဆိုင်",
+          code: "MAIN",
+          isMain: true,
+          status: "active",
+          createdAt: new Date().toISOString() as any,
+        };
+        setBranches([initialBranch]);
         setDoc(defaultBranchRef, {
           name: "Main Branch / ပင်မဆိုင်",
           code: "MAIN",
           isMain: true,
           status: "active",
           createdAt: serverTimestamp(),
-        });
+        }).catch((err) => console.error("Error auto-creating main branch:", err));
       } else {
         setBranches(items);
       }
+    }, (err) => {
+      console.error("Branch subscription error:", err);
     });
 
     // Listen stock transfers
@@ -391,12 +395,13 @@ export default function App() {
         shopId: newShopId,
         shopName: chosenShopName,
         username: usernameTrimmed,
-        role: "user",
-        expiryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days free trial default
+        role: "owner",
+        expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days trial
         createdAt: new Date().toISOString()
       };
 
       await setDoc(doc(db, "users", u.uid), userData);
+      await setDoc(doc(db, "users", usernameTrimmed.toLowerCase()), userData);
       await setDoc(doc(db, "shops", newShopId), {
         shopName: chosenShopName,
         createdAt: serverTimestamp()
@@ -407,6 +412,16 @@ export default function App() {
         address: "",
         footer: "Thank you!",
         theme: "immersive-glass"
+      });
+
+      // Explicitly initialize Main Branch
+      const mainBranchRef = doc(collection(db, "shops", newShopId, "branches"));
+      await setDoc(mainBranchRef, {
+        name: "Main Branch / ပင်မဆိုင်",
+        code: "MAIN",
+        isMain: true,
+        status: "active",
+        createdAt: serverTimestamp()
       });
 
       alert(t.registerSuccess || "Account registered successfully!");
@@ -835,13 +850,88 @@ export default function App() {
                   : currentView === "ai-analyst" 
                   ? t.aiAnalyst 
                   : currentView === "branches"
-                  ? t.branches
+                  ? (lang === "my" ? "ဆိုင်ခွဲများ စီမံခန့်ခွဲခြင်း (Branch Manager)" : "Branch Management")
                   : currentView}
               </h1>
               <p className="text-[9px] sm:text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-none">
                 {shopName}
               </p>
             </div>
+          </div>
+
+          {/* Desktop Navigation Links */}
+          <div className="hidden md:flex items-center gap-1 bg-black/20 dark:bg-white/5 border border-white/10 p-1 rounded-2xl">
+            <button
+              onClick={() => setCurrentView("dashboard")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                currentView === "dashboard"
+                  ? "bg-indigo-500 text-white shadow"
+                  : `${theme.isLight ? "text-slate-700 hover:text-slate-900 hover:bg-slate-200/50" : "text-slate-400 hover:text-white hover:bg-white/5"}`
+              }`}
+            >
+              <LayoutDashboard size={14} />
+              <span>{t.workspace || "Dashboard"}</span>
+            </button>
+
+            <button
+              onClick={() => setCurrentView("pos")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                currentView === "pos"
+                  ? "bg-indigo-500 text-white shadow"
+                  : `${theme.isLight ? "text-slate-700 hover:text-slate-900 hover:bg-slate-200/50" : "text-slate-400 hover:text-white hover:bg-white/5"}`
+              }`}
+            >
+              <ShoppingCart size={14} />
+              <span>POS</span>
+            </button>
+
+            <button
+              onClick={() => setCurrentView("branches")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                currentView === "branches"
+                  ? "bg-indigo-500 text-white shadow"
+                  : `${theme.isLight ? "text-slate-700 hover:text-slate-900 hover:bg-slate-200/50" : "text-slate-400 hover:text-white hover:bg-white/5"}`
+              }`}
+            >
+              <Building2 size={14} />
+              <span>{lang === "my" ? "ဆိုင်ခွဲများ (Branches)" : "Branches"}</span>
+            </button>
+
+            <button
+              onClick={() => setCurrentView("products")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                currentView === "products"
+                  ? "bg-indigo-500 text-white shadow"
+                  : `${theme.isLight ? "text-slate-700 hover:text-slate-900 hover:bg-slate-200/50" : "text-slate-400 hover:text-white hover:bg-white/5"}`
+              }`}
+            >
+              <Package size={14} />
+              <span>{t.products}</span>
+            </button>
+
+            <button
+              onClick={() => setCurrentView("reports")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                currentView === "reports"
+                  ? "bg-indigo-500 text-white shadow"
+                  : `${theme.isLight ? "text-slate-700 hover:text-slate-900 hover:bg-slate-200/50" : "text-slate-400 hover:text-white hover:bg-white/5"}`
+              }`}
+            >
+              <BarChart3 size={14} />
+              <span>{t.salesSummary}</span>
+            </button>
+
+            <button
+              onClick={() => setCurrentView("ai-analyst")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                currentView === "ai-analyst"
+                  ? "bg-indigo-500 text-white shadow"
+                  : `${theme.isLight ? "text-slate-700 hover:text-slate-900 hover:bg-slate-200/50" : "text-slate-400 hover:text-white hover:bg-white/5"}`
+              }`}
+            >
+              <Sparkles size={14} />
+              <span>{t.aiAnalyst}</span>
+            </button>
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
@@ -1195,17 +1285,18 @@ export default function App() {
             <div className="space-y-3">
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1">{t.otherSecs}</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {!isStaffUser && (
-                  <button
-                    onClick={() => setCurrentView("branches")}
-                    className={`${theme.bgInner} rounded-2xl p-4 flex items-center gap-3 shadow-sm border ${theme.border} ${theme.borderHover} transition cursor-pointer`}
-                  >
-                    <div className="bg-indigo-500/10 text-indigo-400 p-2 rounded-xl border border-indigo-500/10">
-                      <Building2 size={18} />
-                    </div>
-                    <span className={`text-xs font-bold ${theme.isLight ? "text-slate-700" : "text-slate-300"}`}>{t.branches}</span>
-                  </button>
-                )}
+                <button
+                  onClick={() => setCurrentView("branches")}
+                  className={`${theme.bgInner} rounded-2xl p-4 flex items-center gap-3 shadow-sm border ${theme.border} ${theme.borderHover} transition cursor-pointer group hover:border-indigo-500/50`}
+                >
+                  <div className="bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500 group-hover:text-white p-2 rounded-xl border border-indigo-500/20 transition-colors">
+                    <Building2 size={18} />
+                  </div>
+                  <div className="text-left">
+                    <div className={`text-xs font-bold ${theme.isLight ? "text-slate-800" : "text-slate-200"}`}>{t.branches}</div>
+                    <div className="text-[9px] text-slate-500 font-semibold">{branches.length} {lang === "my" ? "ဆိုင်ခွဲ" : "Branches"}</div>
+                  </div>
+                </button>
 
                 <button
                   onClick={() => setCurrentView("products")}
@@ -1742,17 +1833,15 @@ export default function App() {
           <span className="text-[8px] font-black">POS</span>
         </button>
 
-        {!isStaffUser && (
-          <button
-            onClick={() => setCurrentView("branches")}
-            className={`flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all cursor-pointer ${
-              currentView === "branches" ? "text-indigo-400 bg-white/5" : "text-slate-500"
-            }`}
-          >
-            <Building2 size={18} className="mb-0.5" />
-            <span className="text-[8px] font-black">Stores</span>
-          </button>
-        )}
+        <button
+          onClick={() => setCurrentView("branches")}
+          className={`flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all cursor-pointer ${
+            currentView === "branches" ? "text-indigo-400 bg-white/5" : "text-slate-500"
+          }`}
+        >
+          <Building2 size={18} className="mb-0.5" />
+          <span className="text-[8px] font-black">Stores</span>
+        </button>
 
         <button
           onClick={() => setCurrentView("products")}
